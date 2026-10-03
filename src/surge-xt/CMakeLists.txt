@@ -83,6 +83,7 @@ target_sources(${PROJECT_NAME} PRIVATE
   SurgeSynthEditor.cpp
   SurgeSynthEditor.h
   SurgeSynthProcessor.cpp
+  SurgeConnector.cpp
   SurgeSynthProcessor.h
 
   SurgeCLAPPresetDiscovery.cpp
@@ -255,6 +256,7 @@ target_include_directories(${PROJECT_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/gui
   ${CMAKE_CURRENT_SOURCE_DIR}/osc
   ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_SOURCE_DIR}/connector
 )
 
 add_subdirectory(cli)

@@ -24,6 +24,7 @@
 #define SURGE_SRC_SURGE_XT_SURGESYNTHPROCESSOR_H
 
 #include "SurgeSynthesizer.h"
+#include <PresetConnector.h>
 #include "SurgeStorage.h"
 #include "util/LockFreeStack.h"
 
@@ -249,6 +250,7 @@ struct SurgeBypassParameter : public juce::RangedAudioParameter
 };
 
 class SurgeSynthProcessor : public juce::AudioProcessor,
+                            public presetconnector::Handler,
                             public juce::VST3ClientExtensions,
 
 #if HAS_CLAP_JUCE_EXTENSIONS
@@ -454,6 +456,10 @@ class SurgeSynthProcessor : public juce::AudioProcessor,
 
     void surgeParameterUpdated(const SurgeSynthesizer::ID &id, float value) override;
     void surgeMacroUpdated(long macroNum, float d) override;
+
+    // Preset Connector (see connector/ and SurgeConnector.cpp)
+    std::string handleRequest(const std::string &requestJson) override;
+    std::string m_connector_current_id;
 
     std::unique_ptr<SurgeSynthesizer> surge;
     std::unordered_map<SurgeSynthesizer::ID, SurgeParamToJuceParamAdapter *> paramsByID;
