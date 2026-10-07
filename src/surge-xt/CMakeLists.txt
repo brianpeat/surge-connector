@@ -259,6 +259,16 @@ target_include_directories(${PROJECT_NAME}
   ${CMAKE_SOURCE_DIR}/presetbridge
 )
 
+# Preset Bridge discovery (spec 3.3): advertise the feature in the bundle so a host need not load the plugin to find out.
+# The bundle is re-signed (ad hoc) after the file is added.
+if(APPLE AND TARGET ${PROJECT_NAME}_AU)
+  add_custom_command(TARGET ${PROJECT_NAME}_AU POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:${PROJECT_NAME}_AU>/Contents/Resources/PresetBridge"
+    COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/presetbridge/discovery.json" "$<TARGET_BUNDLE_DIR:${PROJECT_NAME}_AU>/Contents/Resources/PresetBridge/discovery.json"
+    COMMAND codesign --force -s - "$<TARGET_BUNDLE_DIR:${PROJECT_NAME}_AU>"
+    VERBATIM)
+endif()
+
 add_subdirectory(cli)
 
 if(APPLE)

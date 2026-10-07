@@ -10,6 +10,7 @@
 #include "PatchDB.h"
 #include "version.h"
 #include <PresetBridge.h>
+#include <cstdlib>
 #include <fstream>
 #include <unordered_set>
 
@@ -20,11 +21,54 @@ using juce::var;
 
 const char *kRevisionPrefix = "surge-xt-patchdb-";
 
-var errorResponse(const char *code, const juce::String &message)
+// ---- Access level and throttling (spec 3.1 and 3.2) --------------------------------------------------------------------
+// Surge XT is open source, so by default it shares everything ("open", no throttle). To try the lower levels, set
+// PRESETBRIDGE_ACCESS=catalog|audition|insight|open (and optionally PRESETBRIDGE_LOADS_PER_MINUTE=N) before the plugin loads.
+struct BridgeConfig
+{
+    presetbridge::Access access{presetbridge::Access::open};
+    int loadsPerMinute{0};
+    BridgeConfig()
+    {
+        if (const char *a = std::getenv("PRESETBRIDGE_ACCESS"))
+            access = presetbridge::accessFromName(a, presetbridge::Access::open);
+        loadsPerMinute =
+            (access == presetbridge::Access::audition || access == presetbridge::Access::insight) ? 10 : 0;
+        if (const char *n = std::getenv("PRESETBRIDGE_LOADS_PER_MINUTE"))
+            loadsPerMinute = std::atoi(n);
+    }
+};
+BridgeConfig &bridgeConfig()
+{
+    static BridgeConfig c;
+    return c;
+}
+presetbridge::Throttle &loadThrottle()
+{
+    static presetbridge::Throttle t(bridgeConfig().loadsPerMinute);
+    return t;
+}
+bool opAllowed(const juce::String &op)
+{
+    using presetbridge::Access;
+    using presetbridge::atLeast;
+    const Access a = bridgeConfig().access;
+    if (op == "hello" || op == "list" || op == "get" || op == "collections" || op == "collection")
+        return true;
+    if (op == "load" || op == "current" || op == "entitled")
+        return atLeast(a, Access::audition);
+    if (op == "exportState")
+        return atLeast(a, Access::open);
+    return false;
+}
+
+var errorResponse(const char *code, const juce::String &message, int retryAfterMs = 0)
 {
     auto *err = new DynamicObject();
     err->setProperty("code", code);
     err->setProperty("message", message);
+    if (retryAfterMs > 0)
+        err->setProperty("retryAfterMs", retryAfterMs);
     auto *r = new DynamicObject();
     r->setProperty("ok", false);
     r->setProperty("error", var(err));
@@ -160,6 +204,10 @@ std::string SurgeSynthProcessor::handleRequest(const std::string &requestJson)
     var out(res);
     res->setProperty("ok", true);
 
+    if (!opAllowed(op))
+        return toJson(errorResponse("unsupported", "not offered at access level " +
+                                                       juce::String(presetbridge::accessName(bridgeConfig().access)) + ": " + op));
+
     if (op == "hello")
     {
         const auto catalog = readCatalog(surge->storage);
@@ -168,10 +216,23 @@ std::string SurgeSynthProcessor::handleRequest(const std::string &requestJson)
         plugin->setProperty("name", "Surge XT");
         plugin->setProperty("id", "org.surge-synth-team.surge-xt");
         plugin->setProperty("version", juce::String(Surge::Build::FullVersionStr));
+        plugin->setProperty("kind", "instrument");
+        auto *au = new DynamicObject();
+        au->setProperty("type", "aumu");
+        au->setProperty("subtype", "SgXT");
+        au->setProperty("manufacturer", "VmbA");
+        auto *clap = new DynamicObject();
+        clap->setProperty("id", "org.surge-synth-team.surge-xt");
+        auto *identity = new DynamicObject();
+        identity->setProperty("au", var(au));
+        identity->setProperty("clap", var(clap));
+        plugin->setProperty("identity", var(identity));
         res->setProperty("plugin", var(plugin));
+        res->setProperty("access", presetbridge::accessName(bridgeConfig().access));
         juce::Array<var> ops;
-        for (auto *o : {"hello", "list", "get", "load", "exportState", "collections", "collection"})
-            ops.add(juce::String(o));
+        for (auto *o : {"hello", "list", "get", "load", "exportState", "current", "collections", "collection"})
+            if (opAllowed(o))
+                ops.add(juce::String(o));
         res->setProperty("ops", var(ops));
         res->setProperty("revision", juce::String(kRevisionPrefix) + juce::String((int)catalog.size()));
         auto *counts = new DynamicObject();
@@ -179,6 +240,10 @@ std::string SurgeSynthProcessor::handleRequest(const std::string &requestJson)
         res->setProperty("counts", var(counts));
         auto *limits = new DynamicObject();
         limits->setProperty("pageMax", 500);
+        limits->setProperty("timeoutMs", 30000);
+        limits->setProperty("concurrent", 1);
+        if (bridgeConfig().loadsPerMinute > 0)
+            limits->setProperty("loadsPerMinute", bridgeConfig().loadsPerMinute);
         res->setProperty("limits", var(limits));
     }
     else if (op == "list")
@@ -221,6 +286,10 @@ std::string SurgeSynthProcessor::handleRequest(const std::string &requestJson)
                 return toJson(errorResponse("failed", "could not read the patch file"));
             if (op == "load")
             {
+                // The plugin, not the host, enforces the load limit (spec 3.2).
+                const int wait = loadThrottle().tryUse();
+                if (wait > 0)
+                    return toJson(errorResponse("rate_limited", "too many loads; slow down", wait));
                 if (surge->audio_processing_active)
                 {
                     // Audio is running: hand the patch to the audio thread, as setStateInformation does (safe from any thread).
