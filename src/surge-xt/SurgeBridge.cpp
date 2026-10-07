@@ -1,5 +1,5 @@
 /*
- * Preset Connector handler for Surge XT (spec v0.1 draft, https://github.com/brianpeat/PresetConnector).
+ * Preset Bridge handler for Surge XT (spec v0.1 draft, https://github.com/brianpeat/PresetBridge).
  *
  * Lets a host list Surge's own patch library (factory, third party and user patches, with category, author and the user's
  * favorites) and load one by id, through the plugin itself. Metadata comes from Surge's patch database (PatchDB), the same
@@ -9,7 +9,7 @@
 #include "SurgeStorage.h"
 #include "PatchDB.h"
 #include "version.h"
-#include <PresetConnector.h>
+#include <PresetBridge.h>
 #include <fstream>
 #include <unordered_set>
 

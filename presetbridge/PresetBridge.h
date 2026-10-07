@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
-// Preset Connector reference header (spec v0.1 draft). Apache License 2.0. Plain C++17, no dependencies.
+// Preset Bridge reference header (spec v0.1 draft). Apache License 2.0. Plain C++17, no dependencies.
 //
 // To support the connector, a plugin implements ONE function: take a JSON request, return a JSON response.
 // The same function serves every doorway (AU property, VST3 message, manifest generation, tests).
 #pragma once
 #include <string>
 
-namespace presetconnector {
+namespace presetbridge {
 
 // AU v2 custom property ID ('PCon'). See spec section 4.3.
 constexpr unsigned int kAUPropertyID = 1346457454u;
@@ -19,4 +19,4 @@ struct Handler {
     virtual std::string handleRequest(const std::string& requestJson) = 0;
 };
 
-}  // namespace presetconnector
+}  // namespace presetbridge

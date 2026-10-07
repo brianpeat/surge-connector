@@ -6,7 +6,7 @@
 #import <Foundation/Foundation.h>
 #include <string>
 
-namespace presetconnector {
+namespace presetbridge {
 
 inline std::string cfToJson(CFPropertyListRef plist) {
     if (plist == nullptr || ![NSJSONSerialization isValidJSONObject:(__bridge id)plist]) return "{}";
@@ -21,4 +21,4 @@ inline CFPropertyListRef jsonToCF(const std::string& json) {
     return obj ? CFRetain((__bridge CFTypeRef)obj) : nullptr;
 }
 
-}  // namespace presetconnector
+}  // namespace presetbridge
