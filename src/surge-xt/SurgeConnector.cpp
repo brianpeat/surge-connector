@@ -221,8 +221,17 @@ std::string SurgeSynthProcessor::handleRequest(const std::string &requestJson)
                 return toJson(errorResponse("failed", "could not read the patch file"));
             if (op == "load")
             {
-                surge->enqueuePatchForLoad(bytes.data(), (int)bytes.size());   // safe from any thread
-                surge->processAudioThreadOpsWhenAudioEngineUnavailable();
+                if (surge->audio_processing_active)
+                {
+                    // Audio is running: hand the patch to the audio thread, as setStateInformation does (safe from any thread).
+                    surge->enqueuePatchForLoad(bytes.data(), (int)bytes.size());
+                }
+                else
+                {
+                    // No audio thread is consuming the queue (a host that only browses): load synchronously, as Surge's tests do.
+                    if (!surge->loadPatchByPath(found->file.c_str(), -1, found->name.c_str()))
+                        return toJson(errorResponse("failed", "Surge could not load the patch file"));
+                }
                 m_connector_current_id = found->id;
             }
             else
