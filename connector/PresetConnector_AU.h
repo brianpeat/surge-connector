@@ -1,5 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
 // Objective-C++ glue used by an AU wrapper: converts the CFPropertyList the host passes to/from the JSON the
-// Handler uses. MIT license.
+// Handler uses. Apache License 2.0.
 #pragma once
 #include <CoreFoundation/CoreFoundation.h>
 #import <Foundation/Foundation.h>
