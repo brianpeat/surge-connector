@@ -199,6 +199,8 @@ std::string SurgeSynthProcessor::handleRequest(const std::string &requestJson)
         return toJson(errorResponse("bad_request", "request is not a JSON object"));
     if (!surge)
         return toJson(errorResponse("busy", "synth not ready"));
+    if (!req["op"].isString() || req["op"].toString().isEmpty())
+        return toJson(errorResponse("bad_request", "request needs a string \"op\""));
     const juce::String op = req["op"].toString();
     auto *res = new DynamicObject();
     var out(res);
@@ -340,6 +342,8 @@ std::string SurgeSynthProcessor::handleRequest(const std::string &requestJson)
     {
         if (!m_connector_current_id.empty())
             res->setProperty("id", juce::String(juce::CharPointer_UTF8(m_connector_current_id.c_str())));
+        // true when loading another patch would discard the user's unsaved edits (spec 6, `current`)
+        res->setProperty("modified", surge->storage.getPatch().isDirty.load());
     }
     else
     {
