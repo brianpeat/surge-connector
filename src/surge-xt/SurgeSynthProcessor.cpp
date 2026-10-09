@@ -194,6 +194,7 @@ SurgeSynthProcessor::SurgeSynthProcessor()
 
 SurgeSynthProcessor::~SurgeSynthProcessor()
 {
+    detachPresetBridgeVST3();
     if (!surge)
     {
         return;

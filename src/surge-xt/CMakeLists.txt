@@ -84,6 +84,7 @@ target_sources(${PROJECT_NAME} PRIVATE
   SurgeSynthEditor.h
   SurgeSynthProcessor.cpp
   SurgeBridge.cpp
+  SurgeBridgeVST3.cpp
   SurgeSynthProcessor.h
 
   SurgeCLAPPresetDiscovery.cpp
@@ -258,6 +259,14 @@ target_include_directories(${PROJECT_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${CMAKE_SOURCE_DIR}/presetbridge
 )
+
+# VST3 SDK headers (bundled with JUCE) for the Preset Bridge VST3 doorway; the header needs no SDK .cpp files.
+foreach(_sdk modules/juce_audio_processors_headless/format_types/VST3_SDK modules/juce_audio_processors/format_types/VST3_SDK)
+  if(EXISTS ${SURGE_JUCE_PATH}/${_sdk}/pluginterfaces/base/funknown.h)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${SURGE_JUCE_PATH}/${_sdk})
+    break()
+  endif()
+endforeach()
 
 # Preset Bridge discovery (spec 3.3): advertise the feature in the bundle so a host need not load the plugin to find out.
 # The bundle is re-signed (ad hoc) after the file is added.

@@ -267,6 +267,11 @@ class SurgeSynthProcessor : public juce::AudioProcessor,
     SurgeSynthProcessor();
     ~SurgeSynthProcessor();
 
+    // Preset Bridge VST3 doorway (SurgeBridgeVST3.cpp): a host asking the edit controller for the bridge's interface id gets it, with no JUCE change.
+    int32_t queryIEditController(const Steinberg::TUID iid, void **obj) override;
+    void detachPresetBridgeVST3();
+    std::shared_ptr<void> presetBridgeVST3Slot;
+
     //==============================================================================
     void prepareToPlay(double sampleRate, int samplesPerBlock) override;
     void releaseResources() override;
