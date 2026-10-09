@@ -177,7 +177,7 @@ SurgefxAudioProcessor::SurgefxAudioProcessor()
     oscHandler.initOSC(this, storage);
 }
 
-SurgefxAudioProcessor::~SurgefxAudioProcessor() {}
+SurgefxAudioProcessor::~SurgefxAudioProcessor() { detachPresetBridgeVST3(); }
 
 //==============================================================================
 const juce::String SurgefxAudioProcessor::getName() const { return JucePlugin_Name; }

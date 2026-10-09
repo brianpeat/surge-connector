@@ -60,7 +60,25 @@ target_sources(${PROJECT_NAME} PRIVATE
   SurgeLookAndFeel.h
   FXOpenSoundControl.cpp
   FXOpenSoundControl.h
+  SurgeFXBridge.cpp
+  SurgeFXBridgeVST3.cpp
   )
+
+target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/presetbridge)
+foreach(_sdk modules/juce_audio_processors_headless/format_types/VST3_SDK modules/juce_audio_processors/format_types/VST3_SDK)
+  if(EXISTS ${SURGE_JUCE_PATH}/${_sdk}/pluginterfaces/base/funknown.h)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${SURGE_JUCE_PATH}/${_sdk})
+    break()
+  endif()
+endforeach()
+
+if(APPLE AND TARGET ${PROJECT_NAME}_AU)
+  add_custom_command(TARGET ${PROJECT_NAME}_AU POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:${PROJECT_NAME}_AU>/Contents/Resources/PresetBridge"
+    COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/presetbridge/discovery-fx.json" "$<TARGET_BUNDLE_DIR:${PROJECT_NAME}_AU>/Contents/Resources/PresetBridge/discovery.json"
+    COMMAND codesign --force -s - "$<TARGET_BUNDLE_DIR:${PROJECT_NAME}_AU>"
+    VERBATIM)
+endif()
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
   surge::surge-common
