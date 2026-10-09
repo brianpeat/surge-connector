@@ -270,6 +270,11 @@ class SurgeSynthProcessor : public juce::AudioProcessor,
     // Preset Bridge VST3 doorway (SurgeBridgeVST3.cpp): a host asking the edit controller for the bridge's interface id gets it, with no JUCE change.
     int32_t queryIEditController(const Steinberg::TUID iid, void **obj) override;
     void detachPresetBridgeVST3();
+#if HAS_CLAP_JUCE_EXTENSIONS
+    // Preset Bridge CLAP extension "presetbridge/1" (SurgeBridgeCLAP.cpp), through the pluginExtension hook of clap-juce-extensions
+    const void *pluginExtension(const char *id, const clap_plugin_t *plugin) noexcept override;
+    void detachPresetBridgeCLAP();
+#endif
     std::shared_ptr<void> presetBridgeVST3Slot;
 
     //==============================================================================

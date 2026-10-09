@@ -1,0 +1,40 @@
+diff --git a/include/clap-juce-extensions/clap-juce-extensions.h b/include/clap-juce-extensions/clap-juce-extensions.h
+index 206bb62..4aea252 100644
+--- a/include/clap-juce-extensions/clap-juce-extensions.h
++++ b/include/clap-juce-extensions/clap-juce-extensions.h
+@@ -293,6 +293,17 @@ struct clap_juce_audio_processor_capabilities
+     }
+ 
+     /** If your plugin supports preset load, then override this method to return true. */
++    /**
++     * Return a pointer to a custom CLAP plugin extension for `id` (what the host asked
++     * clap_plugin_t::get_extension for), or nullptr. `plugin` is the clap_plugin_t being asked, so
++     * an extension's callbacks (which receive only that pointer) can find this processor again.
++     * The returned pointer must stay valid for the plugin's lifetime.
++     */
++    virtual const void *pluginExtension(const char * /*id*/, const clap_plugin_t * /*plugin*/) noexcept
++    {
++        return nullptr;
++    }
++
+     virtual bool supportsPresetLoad() const noexcept { return false; }
+ 
+     /**
+diff --git a/src/wrapper/clap-juce-wrapper.cpp b/src/wrapper/clap-juce-wrapper.cpp
+index 39882a0..e269b98 100644
+--- a/src/wrapper/clap-juce-wrapper.cpp
++++ b/src/wrapper/clap-juce-wrapper.cpp
+@@ -1316,6 +1316,13 @@ class ClapJuceWrapper : public clap::helpers::Plugin<
+         return false;
+     }
+ 
++    const void *extension(const char *id) noexcept override
++    {
++        if (processorAsClapExtensions)
++            return processorAsClapExtensions->pluginExtension(id, clapPlugin());
++        return nullptr;
++    }
++
+     bool implementsPresetLoad() const noexcept override
+     {
+         if (processorAsClapExtensions)

@@ -19,7 +19,12 @@ Build (macOS, arm64):
 ```
 git submodule update --init --recursive --depth 1
 git -C libs/JUCE apply ../../patches/juce-au-presetbridge-hook.patch
+git -C libs/clap-juce-extensions apply ../../patches/clap-juce-extensions-extension-hook.patch   # only for the CLAP build
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=arm64 \
-  -DCMAKE_OSX_SYSROOT=$(xcrun --show-sdk-path) -DSURGE_BUILD_CLAP=OFF -DSURGE_BUILD_TESTRUNNER=OFF -DSURGE_COPY_AFTER_BUILD=OFF
+  -DCMAKE_OSX_SYSROOT=$(xcrun --show-sdk-path) -DSURGE_BUILD_CLAP=ON -DSURGE_BUILD_TESTRUNNER=OFF -DSURGE_COPY_AFTER_BUILD=OFF
 cmake --build build --target surge-xt_AU
 ```
+
+
+## Formats
+Audio Unit (property, needs the JUCE patch), VST3 (`SurgeBridgeVST3.cpp`, no JUCE patch) and CLAP (`SurgeBridgeCLAP.cpp`, needs the small clap-juce-extensions hook above, which is generic: a processor can return its own plugin extension). Surge XT Effects has AU and VST3 (`src/surge-fx/SurgeFXBridge*.cpp`), `kind: effect`. Check any build with `tools/bridgecheck/bridgecheck` from the PresetBridge repo.

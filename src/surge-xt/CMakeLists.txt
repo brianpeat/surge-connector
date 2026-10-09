@@ -67,7 +67,7 @@ if(SURGE_BUILD_CLAP)
     CLAP_ID "org.surge-synth-team.surge-xt"
 
     CLAP_SUPPORTS_CUSTOM_FACTORY 1
-    CLAP_FEATURES "instrument" "synthesizer" "stereo" "free and open source")
+    CLAP_FEATURES "instrument" "synthesizer" "stereo" "free and open source" "presetbridge")
 endif()
 
 if(JUCE_ASIO_SUPPORT)
@@ -85,6 +85,7 @@ target_sources(${PROJECT_NAME} PRIVATE
   SurgeSynthProcessor.cpp
   SurgeBridge.cpp
   SurgeBridgeVST3.cpp
+  SurgeBridgeCLAP.cpp
   SurgeSynthProcessor.h
 
   SurgeCLAPPresetDiscovery.cpp
