@@ -245,7 +245,6 @@ private:
     }
     std::string list(const std::string& req) const {
         const auto items = valid(); const auto rev = revisionFor(items);
-        std::string since; if (mini::getString(req, "since", since) && since == rev) return "{\"ok\":true,\"unchanged\":true,\"revision\":\"" + jsonEscape(rev) + "\"}";
         const auto start = pageStart(req), n = pageSize(req);
         std::string out = "{\"ok\":true,\"presets\":[";
         std::size_t end = start;
