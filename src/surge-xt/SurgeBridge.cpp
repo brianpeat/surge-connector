@@ -83,7 +83,8 @@ struct Entry
     std::string name;
     std::string category;
     std::string author;
-    std::string file;
+    std::string file;    // absolute path: used internally to load, never sent to a host
+    std::string relFile; // path under its content folder, e.g. "factory/Basses/Attacky.fxp": what a host may see
     std::string origin;
     bool favorite{false};
 };
@@ -121,6 +122,7 @@ std::vector<Entry> readCatalog(SurgeStorage &storage)
         }
         if (rel.empty())
             rel = fs::path(file).filename().generic_u8string();
+        e.relFile = e.origin + "/" + rel;
         if (rel.size() > 4 && rel.compare(rel.size() - 4, 4, ".fxp") == 0)
             rel.resize(rel.size() - 4);
         e.id = e.origin + "/" + rel;
@@ -185,7 +187,8 @@ var record(const Entry &e)
     r->setProperty("favorite", e.favorite);
     auto *loc = new DynamicObject();
     loc->setProperty("kind", "file");
-    loc->setProperty("uri", juce::String(juce::CharPointer_UTF8(e.file.c_str())));
+    // Informational only, and never an absolute path (it would carry the user's account name): the path under the content folder.
+    loc->setProperty("uri", juce::String(juce::CharPointer_UTF8(e.relFile.c_str())));
     r->setProperty("location", var(loc));
     // Deliberately no "rights": Surge does not say, which exercises the "unspecified" case in the spec.
     return var(r);
