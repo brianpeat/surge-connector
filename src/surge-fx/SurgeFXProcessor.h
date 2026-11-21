@@ -30,8 +30,8 @@
 #include "Effect.h"
 #include "FXOpenSoundControl.h"
 #include "FxPresetAndClipboardManager.h"
-#include <PresetBridge.h>
-#include <PresetBridgeCatalog.h>
+#include <PresetRelay.h>
+#include <PresetRelayCatalog.h>
 #include <memory>
 #include <mutex>
 #include <map>
@@ -60,24 +60,24 @@ enum ParamKind
 /**
  */
 class SurgefxAudioProcessor : public juce::AudioProcessor,
-                              public presetbridge::Handler,
+                              public presetrelay::Handler,
                               public juce::VST3ClientExtensions,
                               public juce::AudioProcessorParameter::Listener,
                               public juce::AsyncUpdater
 {
   public:
-    // Preset Bridge (SurgeFXBridge.cpp, SurgeFXBridgeVST3.cpp): Surge XT Effects lists its .srgfx effect presets and loads one by id, switching effect type if needed.
+    // PresetRelay (SurgeFXBridge.cpp, SurgeFXBridgeVST3.cpp): Surge XT Effects lists its .srgfx effect presets and loads one by id, switching effect type if needed.
     std::string handleRequest(const std::string &requestJson) override;
     int32_t queryIEditController(const Steinberg::TUID iid, void **obj) override;
-    void detachPresetBridgeVST3();
-    std::shared_ptr<void> presetBridgeVST3Slot;
-    std::unique_ptr<presetbridge::Catalog> bridgeCatalog;
+    void detachPresetRelayVST3();
+    std::shared_ptr<void> presetRelayVST3Slot;
+    std::unique_ptr<presetrelay::Catalog> bridgeCatalog;
     std::mutex bridgeMutex;
     Surge::Storage::FxUserPreset bridgeScanner;
     std::map<std::string, Surge::Storage::FxUserPreset::Preset> bridgePresets;
     std::vector<std::string> bridgeRecords;
     std::string bridgeCurrentId;
-    void buildPresetBridge();
+    void buildPresetRelay();
 
     //==============================================================================
     SurgefxAudioProcessor();

@@ -7,10 +7,10 @@ index 2e45c21..8c45818 100644
  #include <juce_audio_processors_headless/format_types/juce_LegacyAudioParameter.h>
  #include <juce_audio_processors_headless/format_types/juce_AU_Shared.h>
 +
-+// Preset Bridge hook (optional): active only if the plugin's include path has PresetBridge.h.
-+#if __has_include(<PresetBridge.h>)
-+ #include <PresetBridge.h>
-+ #include <PresetBridge_AU.h>
++// PresetRelay hook (optional): active only if the plugin's include path has PresetRelay.h.
++#if __has_include(<PresetRelay.h>)
++ #include <PresetRelay.h>
++ #include <PresetRelay_AU.h>
 + #define JUCE_PRESET_BRIDGE 1
 +#endif
  #include <juce_gui_basics/detail/juce_ComponentPeerHelpers.h>
@@ -21,7 +21,7 @@ index 2e45c21..8c45818 100644
      ScopedJuceInitialiser_GUI scopedInitialiser;
      std::unique_ptr<AudioProcessor> juceFilter { createPluginFilterOfType (AudioProcessor::wrapperType_AudioUnit) };
 +   #if JUCE_PRESET_BRIDGE
-+    CFPropertyListRef presetConnectorResponse = nullptr;
++    CFPropertyListRef presetRelayResponse = nullptr;
 +   #endif
  };
  
@@ -31,8 +31,8 @@ index 2e45c21..8c45818 100644
                      return noErr;
  
 +               #if JUCE_PRESET_BRIDGE
-+                case presetbridge::kAUPropertyID:
-+                    if (dynamic_cast<presetbridge::Handler*> (juceFilter.get()) == nullptr)
++                case presetrelay::kAUPropertyID:
++                    if (dynamic_cast<presetrelay::Handler*> (juceFilter.get()) == nullptr)
 +                        break;
 +                    outDataSize = sizeof (CFPropertyListRef);
 +                    outWritable = true;
@@ -47,19 +47,19 @@ index 2e45c21..8c45818 100644
              switch (inID)
              {
 +               #if JUCE_PRESET_BRIDGE
-+                case presetbridge::kAUPropertyID:
++                case presetrelay::kAUPropertyID:
 +                {
-+                    auto* handler = dynamic_cast<presetbridge::Handler*> (juceFilter.get());
++                    auto* handler = dynamic_cast<presetrelay::Handler*> (juceFilter.get());
 +                    if (handler == nullptr)
 +                        return kAudioUnitErr_InvalidProperty;
 +
-+                    if (presetConnectorResponse == nullptr)   // nothing requested yet: answer "hello"
-+                        presetConnectorResponse = presetbridge::jsonToCF (handler->handleRequest ("{\"op\":\"hello\",\"v\":1}"));
-+                    if (presetConnectorResponse == nullptr)
++                    if (presetRelayResponse == nullptr)   // nothing requested yet: answer "hello"
++                        presetRelayResponse = presetrelay::jsonToCF (handler->handleRequest ("{\"op\":\"hello\",\"v\":1}"));
++                    if (presetRelayResponse == nullptr)
 +                        return kAudioUnitErr_InvalidPropertyValue;
 +
-+                    CFRetain (presetConnectorResponse);   // the caller releases it
-+                    *(CFPropertyListRef*) outData = presetConnectorResponse;
++                    CFRetain (presetRelayResponse);   // the caller releases it
++                    *(CFPropertyListRef*) outData = presetRelayResponse;
 +                    return noErr;
 +                }
 +               #endif
@@ -72,16 +72,16 @@ index 2e45c21..8c45818 100644
              switch (inID)
              {
 +               #if JUCE_PRESET_BRIDGE
-+                case presetbridge::kAUPropertyID:
++                case presetrelay::kAUPropertyID:
 +                {
-+                    auto* handler = dynamic_cast<presetbridge::Handler*> (juceFilter.get());
++                    auto* handler = dynamic_cast<presetrelay::Handler*> (juceFilter.get());
 +                    if (handler == nullptr || inDataSize < sizeof (CFPropertyListRef))
 +                        return kAudioUnitErr_InvalidProperty;
 +
-+                    auto response = handler->handleRequest (presetbridge::cfToJson (*(CFPropertyListRef const*) inData));
-+                    if (presetConnectorResponse != nullptr)
-+                        CFRelease (presetConnectorResponse);
-+                    presetConnectorResponse = presetbridge::jsonToCF (response);
++                    auto response = handler->handleRequest (presetrelay::cfToJson (*(CFPropertyListRef const*) inData));
++                    if (presetRelayResponse != nullptr)
++                        CFRelease (presetRelayResponse);
++                    presetRelayResponse = presetrelay::jsonToCF (response);
 +                    return noErr;
 +                }
 +               #endif

@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
-// Preset Bridge VST3 doorway (spec v0.2 draft, section 4.4). Apache License 2.0.
-// Needs the VST3 SDK headers (pluginterfaces/base/funknown.h and ibstream.h) on the include path and PresetBridge.h from reference/cpp.
+// PresetRelay VST3 doorway (spec v0.2 draft, section 4.4).
+// Needs the VST3 SDK headers (pluginterfaces/base/funknown.h and ibstream.h) on the include path and PresetRelay.h from reference/cpp.
 // Header only; it does not need any SDK .cpp file, so it also links into builds that carry no SDK sources.
 //
-// How a plugin takes part: implement presetbridge::Handler (one function, JSON in, JSON out, as for every format), and when a host calls
-// queryInterface on your IEditController (or IComponent) with IPresetBridge's IID, return a VST3Doorway:
+// How a plugin takes part: implement presetrelay::Handler (one function, JSON in, JSON out, as for every format), and when a host calls
+// queryInterface on your IEditController (or IComponent) with IPresetRelay's IID, return a VST3Doorway:
 //
 //     // in your IEditController::queryInterface (or, with JUCE 8, in VST3ClientExtensions::queryIEditController):
-//     return presetbridge::vst3::query(slot, targetIID, obj);
+//     return presetrelay::vst3::query(slot, targetIID, obj);
 //
-// `slot` is a std::shared_ptr<presetbridge::vst3::Slot> you own next to your Handler; call slot->clear() in your destructor so a host that
+// `slot` is a std::shared_ptr<presetrelay::vst3::Slot> you own next to your Handler; call slot->clear() in your destructor so a host that
 // keeps the interface alive longer than the plugin gets an error instead of a crash.
 #pragma once
 #include <pluginterfaces/base/funknown.h>
@@ -21,17 +21,17 @@
 #include <mutex>
 #include <string>
 
-#include "PresetBridge.h"
+#include "PresetRelay.h"
 
-namespace presetbridge {
+namespace presetrelay {
 namespace vst3 {
 
-// The interface id (random, assigned 2026-10-08; the spec's "IID to be assigned").
+// The interface id of IPresetRelay.
 inline const Steinberg::TUID kInterfaceId = INLINE_UID(0x7d3b9921, 0xa409477c, 0xbbb28829, 0x60c819d2);
-// FUnknown's own id, written out so no SDK .cpp file is needed to compare against it.
+// FUnknown's id, written out so no SDK .cpp file is needed to compare against it.
 inline const Steinberg::TUID kFUnknownId = INLINE_UID(0x00000000, 0x00000000, 0xC0000000, 0x00000046);
 
-class IPresetBridge : public Steinberg::FUnknown {
+class IPresetRelay : public Steinberg::FUnknown {
 public:
     // requestJson: UTF-8 JSON request (spec 6), requestSize bytes (at most 64 KiB). The JSON reply is written to `reply`.
     // Returns kResultOk when a reply was written (it may itself be {"ok":false,...}); kResultFalse if the plugin is gone.
@@ -53,12 +53,12 @@ private:
     Handler* handler_;
 };
 
-class Doorway : public IPresetBridge {
+class Doorway : public IPresetRelay {
 public:
     explicit Doorway(std::shared_ptr<Slot> slot) : slot_(std::move(slot)) {}
     Steinberg::tresult PLUGIN_API queryInterface(const Steinberg::TUID iid, void** obj) override {
         if (std::memcmp(iid, kInterfaceId, sizeof(Steinberg::TUID)) == 0 || std::memcmp(iid, kFUnknownId, sizeof(Steinberg::TUID)) == 0) {
-            *obj = static_cast<IPresetBridge*>(this);
+            *obj = static_cast<IPresetRelay*>(this);
             addRef();
             return Steinberg::kResultOk;
         }
@@ -96,14 +96,14 @@ private:
     std::shared_ptr<Slot> slot_;
 };
 
-// Call from queryInterface: answers for IPresetBridge's id, otherwise returns kNoInterface (let your normal handling continue).
+// Call from queryInterface: answers for IPresetRelay's id, otherwise returns kNoInterface (let your normal handling continue).
 inline Steinberg::tresult query(const std::shared_ptr<Slot>& slot, const Steinberg::TUID iid, void** obj) {
     if (slot && std::memcmp(iid, kInterfaceId, sizeof(Steinberg::TUID)) == 0) {
-        *obj = static_cast<IPresetBridge*>(new Doorway(slot));   // reference count 1, owned by the caller of queryInterface
+        *obj = static_cast<IPresetRelay*>(new Doorway(slot));   // reference count 1, owned by the caller of queryInterface
         return Steinberg::kResultOk;
     }
     return Steinberg::kNoInterface;
 }
 
 }  // namespace vst3
-}  // namespace presetbridge
+}  // namespace presetrelay

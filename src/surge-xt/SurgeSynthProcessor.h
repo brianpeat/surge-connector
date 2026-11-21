@@ -24,7 +24,7 @@
 #define SURGE_SRC_SURGE_XT_SURGESYNTHPROCESSOR_H
 
 #include "SurgeSynthesizer.h"
-#include <PresetBridge.h>
+#include <PresetRelay.h>
 #include "SurgeStorage.h"
 #include "util/LockFreeStack.h"
 
@@ -250,7 +250,7 @@ struct SurgeBypassParameter : public juce::RangedAudioParameter
 };
 
 class SurgeSynthProcessor : public juce::AudioProcessor,
-                            public presetbridge::Handler,
+                            public presetrelay::Handler,
                             public juce::VST3ClientExtensions,
 
 #if HAS_CLAP_JUCE_EXTENSIONS
@@ -267,15 +267,15 @@ class SurgeSynthProcessor : public juce::AudioProcessor,
     SurgeSynthProcessor();
     ~SurgeSynthProcessor();
 
-    // Preset Bridge VST3 doorway (SurgeBridgeVST3.cpp): a host asking the edit controller for the bridge's interface id gets it, with no JUCE change.
+    // PresetRelay VST3 doorway (SurgeBridgeVST3.cpp): a host asking the edit controller for the bridge's interface id gets it, with no JUCE change.
     int32_t queryIEditController(const Steinberg::TUID iid, void **obj) override;
-    void detachPresetBridgeVST3();
+    void detachPresetRelayVST3();
 #if HAS_CLAP_JUCE_EXTENSIONS
-    // Preset Bridge CLAP extension "presetbridge/1" (SurgeBridgeCLAP.cpp), through the pluginExtension hook of clap-juce-extensions
+    // PresetRelay CLAP extension "presetrelay/1" (SurgeBridgeCLAP.cpp), through the pluginExtension hook of clap-juce-extensions
     const void *pluginExtension(const char *id, const clap_plugin_t *plugin) noexcept override;
-    void detachPresetBridgeCLAP();
+    void detachPresetRelayCLAP();
 #endif
-    std::shared_ptr<void> presetBridgeVST3Slot;
+    std::shared_ptr<void> presetRelayVST3Slot;
 
     //==============================================================================
     void prepareToPlay(double sampleRate, int samplesPerBlock) override;
@@ -467,7 +467,7 @@ class SurgeSynthProcessor : public juce::AudioProcessor,
     void surgeParameterUpdated(const SurgeSynthesizer::ID &id, float value) override;
     void surgeMacroUpdated(long macroNum, float d) override;
 
-    // Preset Bridge (see connector/ and SurgeBridge.cpp)
+    // PresetRelay (see connector/ and SurgeBridge.cpp)
     std::string handleRequest(const std::string &requestJson) override;
     std::string m_connector_current_id;
 

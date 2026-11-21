@@ -1,5 +1,5 @@
 /*
- * Preset Bridge handler for Surge XT (spec v0.1 draft, https://github.com/brianpeat/PresetBridge).
+ * PresetRelay handler for Surge XT (spec v0.1 draft, https://github.com/brianpeat/PresetRelay).
  *
  * Lets a host list Surge's own patch library (factory, third party and user patches, with category, author and the user's
  * favorites) and load one by id, through the plugin itself. Metadata comes from Surge's patch database (PatchDB), the same
@@ -9,7 +9,7 @@
 #include "SurgeStorage.h"
 #include "PatchDB.h"
 #include "version.h"
-#include <PresetBridge.h>
+#include <PresetRelay.h>
 #include <cstdlib>
 #include <fstream>
 #include <unordered_set>
@@ -23,18 +23,18 @@ const char *kRevisionPrefix = "surge-xt-patchdb-";
 
 // ---- Access level and throttling (spec 3.1 and 3.2) --------------------------------------------------------------------
 // Surge XT is open source, so by default it shares everything ("open", no throttle). To try the lower levels, set
-// PRESETBRIDGE_ACCESS=catalog|audition|insight|open (and optionally PRESETBRIDGE_LOADS_PER_MINUTE=N) before the plugin loads.
+// PRESETRELAY_ACCESS=catalog|audition|insight|open (and optionally PRESETRELAY_LOADS_PER_MINUTE=N) before the plugin loads.
 struct BridgeConfig
 {
-    presetbridge::Access access{presetbridge::Access::open};
+    presetrelay::Access access{presetrelay::Access::open};
     int loadsPerMinute{0};
     BridgeConfig()
     {
-        if (const char *a = std::getenv("PRESETBRIDGE_ACCESS"))
-            access = presetbridge::accessFromName(a, presetbridge::Access::open);
+        if (const char *a = std::getenv("PRESETRELAY_ACCESS"))
+            access = presetrelay::accessFromName(a, presetrelay::Access::open);
         loadsPerMinute =
-            (access == presetbridge::Access::audition || access == presetbridge::Access::insight) ? 10 : 0;
-        if (const char *n = std::getenv("PRESETBRIDGE_LOADS_PER_MINUTE"))
+            (access == presetrelay::Access::audition || access == presetrelay::Access::insight) ? 10 : 0;
+        if (const char *n = std::getenv("PRESETRELAY_LOADS_PER_MINUTE"))
             loadsPerMinute = std::atoi(n);
     }
 };
@@ -43,15 +43,15 @@ BridgeConfig &bridgeConfig()
     static BridgeConfig c;
     return c;
 }
-presetbridge::Throttle &loadThrottle()
+presetrelay::Throttle &loadThrottle()
 {
-    static presetbridge::Throttle t(bridgeConfig().loadsPerMinute);
+    static presetrelay::Throttle t(bridgeConfig().loadsPerMinute);
     return t;
 }
 bool opAllowed(const juce::String &op)
 {
-    using presetbridge::Access;
-    using presetbridge::atLeast;
+    using presetrelay::Access;
+    using presetrelay::atLeast;
     const Access a = bridgeConfig().access;
     if (op == "hello" || op == "list" || op == "get" || op == "collections" || op == "collection")
         return true;
@@ -211,12 +211,12 @@ std::string SurgeSynthProcessor::handleRequest(const std::string &requestJson)
 
     if (!opAllowed(op))
         return toJson(errorResponse("unsupported", "not offered at access level " +
-                                                       juce::String(presetbridge::accessName(bridgeConfig().access)) + ": " + op));
+                                                       juce::String(presetrelay::accessName(bridgeConfig().access)) + ": " + op));
 
     if (op == "hello")
     {
         const auto catalog = readCatalog(surge->storage);
-        res->setProperty("connector", 1);
+        res->setProperty("relay", 1);
         auto *plugin = new DynamicObject();
         plugin->setProperty("name", "Surge XT");
         plugin->setProperty("id", "org.surge-synth-team.surge-xt");
@@ -233,7 +233,7 @@ std::string SurgeSynthProcessor::handleRequest(const std::string &requestJson)
         identity->setProperty("clap", var(clap));
         plugin->setProperty("identity", var(identity));
         res->setProperty("plugin", var(plugin));
-        res->setProperty("access", presetbridge::accessName(bridgeConfig().access));
+        res->setProperty("access", presetrelay::accessName(bridgeConfig().access));
         juce::Array<var> ops;
         for (auto *o : {"hello", "list", "get", "load", "exportState", "current", "collections", "collection"})
             if (opAllowed(o))

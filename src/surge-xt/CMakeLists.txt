@@ -67,7 +67,7 @@ if(SURGE_BUILD_CLAP)
     CLAP_ID "org.surge-synth-team.surge-xt"
 
     CLAP_SUPPORTS_CUSTOM_FACTORY 1
-    CLAP_FEATURES "instrument" "synthesizer" "stereo" "free and open source" "presetbridge")
+    CLAP_FEATURES "instrument" "synthesizer" "stereo" "free and open source" "presetrelay")
 endif()
 
 if(JUCE_ASIO_SUPPORT)
@@ -258,10 +258,10 @@ target_include_directories(${PROJECT_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/gui
   ${CMAKE_CURRENT_SOURCE_DIR}/osc
   ${CMAKE_CURRENT_SOURCE_DIR}
-  ${CMAKE_SOURCE_DIR}/presetbridge
+  ${CMAKE_SOURCE_DIR}/presetrelay
 )
 
-# VST3 SDK headers (bundled with JUCE) for the Preset Bridge VST3 doorway; the header needs no SDK .cpp files.
+# VST3 SDK headers (bundled with JUCE) for the PresetRelay VST3 doorway; the header needs no SDK .cpp files.
 foreach(_sdk modules/juce_audio_processors_headless/format_types/VST3_SDK modules/juce_audio_processors/format_types/VST3_SDK)
   if(EXISTS ${SURGE_JUCE_PATH}/${_sdk}/pluginterfaces/base/funknown.h)
     target_include_directories(${PROJECT_NAME} PRIVATE ${SURGE_JUCE_PATH}/${_sdk})
@@ -269,12 +269,12 @@ foreach(_sdk modules/juce_audio_processors_headless/format_types/VST3_SDK module
   endif()
 endforeach()
 
-# Preset Bridge discovery (spec 3.3): advertise the feature in the bundle so a host need not load the plugin to find out.
+# PresetRelay discovery (spec 3.3): advertise the feature in the bundle so a host need not load the plugin to find out.
 # The bundle is re-signed (ad hoc) after the file is added.
 if(APPLE AND TARGET ${PROJECT_NAME}_AU)
   add_custom_command(TARGET ${PROJECT_NAME}_AU POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:${PROJECT_NAME}_AU>/Contents/Resources/PresetBridge"
-    COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/presetbridge/discovery.json" "$<TARGET_BUNDLE_DIR:${PROJECT_NAME}_AU>/Contents/Resources/PresetBridge/discovery.json"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:${PROJECT_NAME}_AU>/Contents/Resources/PresetRelay"
+    COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/presetrelay/discovery.json" "$<TARGET_BUNDLE_DIR:${PROJECT_NAME}_AU>/Contents/Resources/PresetRelay/discovery.json"
     COMMAND codesign --force -s - "$<TARGET_BUNDLE_DIR:${PROJECT_NAME}_AU>"
     VERBATIM)
 endif()

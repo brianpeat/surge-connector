@@ -1,4 +1,4 @@
-> **Experimental fork.** This branch adds an optional Preset Bridge connector (a way for the plugin to share its sound catalog with host apps). It is work in progress; the spec link is coming. Not an official release.
+> **Experimental fork.** This branch adds an optional PresetRelay connector (a way for the plugin to share its sound catalog with host apps). It is work in progress; the spec link is coming. Not an official release.
 
 # Surge XT
 

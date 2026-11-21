@@ -1,8 +1,8 @@
 /*
- * Preset Bridge handler for Surge XT Effects (spec https://github.com/brianpeat/PresetBridge): the effect reference.
+ * PresetRelay handler for Surge XT Effects (spec https://github.com/brianpeat/PresetRelay): the effect reference.
  *
  * Lists the effect presets (.srgfx files, factory and user) of every effect type and loads one by id, switching the effect type first
- * when the preset belongs to another effect. Built on presetbridge::Catalog, so the protocol itself is not in this file. GPL-3.0-or-later.
+ * when the preset belongs to another effect. Built on presetrelay::Catalog, so the protocol itself is not in this file. GPL-3.0-or-later.
  */
 #include "SurgeFXProcessor.h"
 #include <cstdlib>
@@ -18,7 +18,7 @@ std::string presetId(const Surge::Storage::FxUserPreset::Preset &p)
 
 std::string recordJson(const Surge::Storage::FxUserPreset::Preset &p)
 {
-    using presetbridge::jsonEscape;
+    using presetrelay::jsonEscape;
     std::ostringstream o;
     o << "{\"id\":\"" << jsonEscape(presetId(p)) << "\",\"name\":\"" << jsonEscape(p.name) << "\",\"origin\":\"" << (p.isFactory ? "factory" : "user")
       << "\",\"categories\":[[\"" << jsonEscape(fx_type_names[p.type]);
@@ -33,16 +33,16 @@ std::string recordJson(const Surge::Storage::FxUserPreset::Preset &p)
 
 struct MainThreadJob
 {
-    std::function<presetbridge::LoadOutcome()> job;
-    presetbridge::LoadOutcome result;
+    std::function<presetrelay::LoadOutcome()> job;
+    presetrelay::LoadOutcome result;
 };
 } // namespace
 
-void SurgefxAudioProcessor::buildPresetBridge()
+void SurgefxAudioProcessor::buildPresetRelay()
 {
     if (bridgeCatalog)
         return;
-    bridgeCatalog = std::make_unique<presetbridge::Catalog>("Surge XT Effects", "org.surge-synth-team.surge-xt-fx", presetbridge::Access::audition, 30);
+    bridgeCatalog = std::make_unique<presetrelay::Catalog>("Surge XT Effects", "org.surge-synth-team.surge-xt-fx", presetrelay::Access::audition, 30);
     auto &cat = *bridgeCatalog;
     cat.kind = "effect";
     cat.version = "";
@@ -55,10 +55,10 @@ void SurgefxAudioProcessor::buildPresetBridge()
                 bridgeRecords.push_back(recordJson(p));
 
     cat.records = [this] { return bridgeRecords; };
-    cat.load = [this](const std::string &id) -> presetbridge::LoadOutcome {
+    cat.load = [this](const std::string &id) -> presetrelay::LoadOutcome {
         auto it = bridgePresets.find(id);
         if (it == bridgePresets.end())
-            return presetbridge::LoadOutcome::notFound();
+            return presetrelay::LoadOutcome::notFound();
         const auto p = it->second;
         if (p.type != getEffectType())
             resetFxType(p.type, true);
@@ -66,15 +66,15 @@ void SurgefxAudioProcessor::buildPresetBridge()
         setCurrentPresetName(p.name);
         std::lock_guard<std::mutex> g(bridgeMutex);
         bridgeCurrentId = id;
-        return presetbridge::LoadOutcome::ok();
+        return presetrelay::LoadOutcome::ok();
     };
     cat.current = [this] {
         std::lock_guard<std::mutex> g(bridgeMutex);
-        return presetbridge::CurrentSound{bridgeCurrentId, false};
+        return presetrelay::CurrentSound{bridgeCurrentId, false};
     };
     // Changing the effect and writing its parameters belongs on the message thread; wait for it.
-    cat.runLoad = [](const std::function<presetbridge::LoadOutcome()> &job) {
-        MainThreadJob m{job, presetbridge::LoadOutcome::busy()};
+    cat.runLoad = [](const std::function<presetrelay::LoadOutcome()> &job) {
+        MainThreadJob m{job, presetrelay::LoadOutcome::busy()};
         juce::MessageManager::getInstance()->callFunctionOnMessageThread(
             [](void *p) -> void * {
                 auto *mj = static_cast<MainThreadJob *>(p);
@@ -91,7 +91,7 @@ std::string SurgefxAudioProcessor::handleRequest(const std::string &requestJson)
     static std::mutex buildMutex;
     {
         std::lock_guard<std::mutex> g(buildMutex);
-        buildPresetBridge();
+        buildPresetRelay();
     }
     return bridgeCatalog->handleRequest(requestJson);
 }

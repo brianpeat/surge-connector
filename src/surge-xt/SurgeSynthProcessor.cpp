@@ -194,9 +194,9 @@ SurgeSynthProcessor::SurgeSynthProcessor()
 
 SurgeSynthProcessor::~SurgeSynthProcessor()
 {
-    detachPresetBridgeVST3();
+    detachPresetRelayVST3();
 #if HAS_CLAP_JUCE_EXTENSIONS
-    detachPresetBridgeCLAP();
+    detachPresetRelayCLAP();
 #endif
     if (!surge)
     {

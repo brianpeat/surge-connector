@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-// Objective-C++ glue used by an AU wrapper: converts the CFPropertyList the host passes to/from the JSON the
-// Handler uses. Apache License 2.0.
+// Objective-C++ glue for an AU wrapper: converts the CFPropertyList a host passes to and from the JSON a Handler uses.
 #pragma once
 #include <CoreFoundation/CoreFoundation.h>
 #import <Foundation/Foundation.h>
 #include <string>
 
-namespace presetbridge {
+namespace presetrelay {
 
 inline std::string cfToJson(CFPropertyListRef plist) {
     if (plist == nullptr || ![NSJSONSerialization isValidJSONObject:(__bridge id)plist]) return "{}";
@@ -14,11 +13,11 @@ inline std::string cfToJson(CFPropertyListRef plist) {
     return d ? std::string((const char*)d.bytes, d.length) : "{}";
 }
 
-// Returns a +1 retained CFPropertyList (dictionary), or nullptr.
+// Returns a +1 retained CFPropertyList (a dictionary), or nullptr.
 inline CFPropertyListRef jsonToCF(const std::string& json) {
     NSData* d = [NSData dataWithBytes:json.data() length:json.size()];
     id obj = [NSJSONSerialization JSONObjectWithData:d options:0 error:nil];
     return obj ? CFRetain((__bridge CFTypeRef)obj) : nullptr;
 }
 
-}  // namespace presetbridge
+}  // namespace presetrelay

@@ -64,7 +64,7 @@ target_sources(${PROJECT_NAME} PRIVATE
   SurgeFXBridgeVST3.cpp
   )
 
-target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/presetbridge)
+target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/presetrelay)
 foreach(_sdk modules/juce_audio_processors_headless/format_types/VST3_SDK modules/juce_audio_processors/format_types/VST3_SDK)
   if(EXISTS ${SURGE_JUCE_PATH}/${_sdk}/pluginterfaces/base/funknown.h)
     target_include_directories(${PROJECT_NAME} PRIVATE ${SURGE_JUCE_PATH}/${_sdk})
@@ -74,8 +74,8 @@ endforeach()
 
 if(APPLE AND TARGET ${PROJECT_NAME}_AU)
   add_custom_command(TARGET ${PROJECT_NAME}_AU POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:${PROJECT_NAME}_AU>/Contents/Resources/PresetBridge"
-    COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/presetbridge/discovery-fx.json" "$<TARGET_BUNDLE_DIR:${PROJECT_NAME}_AU>/Contents/Resources/PresetBridge/discovery.json"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:${PROJECT_NAME}_AU>/Contents/Resources/PresetRelay"
+    COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/presetrelay/discovery-fx.json" "$<TARGET_BUNDLE_DIR:${PROJECT_NAME}_AU>/Contents/Resources/PresetRelay/discovery.json"
     COMMAND codesign --force -s - "$<TARGET_BUNDLE_DIR:${PROJECT_NAME}_AU>"
     VERBATIM)
 endif()
