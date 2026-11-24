@@ -10,26 +10,50 @@
 #if HAS_CLAP_JUCE_EXTENSIONS
 #include <clap/clap.h>
 #include <preset_relay.h>
+#include <atomic>
+#include <chrono>
 #include <cstring>
 #include <map>
+#include <memory>
 #include <mutex>
+#include <vector>
 
 namespace
 {
-std::mutex registryMutex;
-std::map<const clap_plugin_t *, presetrelay::Handler *> registry;
+// One entry per plugin instance: requests to different instances never wait for each other. The map lock is held only to look an
+// entry up, never while a request runs.
+struct Instance
+{
+    std::atomic<presetrelay::Handler *> handler{nullptr};
+    std::timed_mutex turn; // one request at a time per instance, like the other doorways
+};
+std::mutex mapMutex;
+std::map<const clap_plugin_t *, std::shared_ptr<Instance>> registry;
 
 bool bridgeRequest(const clap_plugin_t *plugin, const char *json, uint32_t size, const clap_ostream_t *reply)
 {
     if (!json || !reply)
         return false;
-    std::lock_guard<std::mutex> g(registryMutex); // one request at a time, like the other doorways
-    auto it = registry.find(plugin);
-    if (it == registry.end())
-        return false;
-    const std::string out = size > presetrelay::kMaxRequestBytes
-                                ? presetrelay::errorReply("bad_request", "request too large")
-                                : it->second->handleRequest(std::string(json, size));
+    std::shared_ptr<Instance> inst;
+    {
+        std::lock_guard<std::mutex> g(mapMutex);
+        const auto it = registry.find(plugin);
+        if (it == registry.end())
+            return false;
+        inst = it->second;
+    }
+    std::string out;
+    {
+        std::unique_lock<std::timed_mutex> turn(inst->turn, std::defer_lock);
+        if (size > presetrelay::kMaxRequestBytes)
+            out = presetrelay::errorReply("bad_request", "request too large");
+        else if (!turn.try_lock_for(std::chrono::seconds(10)))
+            out = presetrelay::errorReply("busy", "another request is still running");
+        else if (auto *h = inst->handler.load())
+            out = h->handleRequest(std::string(json, size));
+        else
+            return false; // the plugin is gone
+    }
     std::size_t done = 0;
     while (done < out.size())
     {
@@ -47,15 +71,43 @@ const void *SurgeSynthProcessor::pluginExtension(const char *id, const clap_plug
 {
     if (std::strcmp(id, CLAP_EXT_PRESET_RELAY) != 0)
         return nullptr;
-    std::lock_guard<std::mutex> g(registryMutex);
-    registry[plugin] = static_cast<presetrelay::Handler *>(this);
+    try
+    {
+        std::lock_guard<std::mutex> g(mapMutex);
+        auto &slot = registry[plugin];
+        if (!slot)
+            slot = std::make_shared<Instance>();
+        slot->handler = static_cast<presetrelay::Handler *>(this);
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
     return &bridgeExtension;
 }
 
 void SurgeSynthProcessor::detachPresetRelayCLAP()
 {
-    std::lock_guard<std::mutex> g(registryMutex);
-    for (auto it = registry.begin(); it != registry.end();)
-        it = it->second == static_cast<presetrelay::Handler *>(this) ? registry.erase(it) : std::next(it);
+    std::vector<std::shared_ptr<Instance>> mine;
+    {
+        std::lock_guard<std::mutex> g(mapMutex);
+        for (auto it = registry.begin(); it != registry.end();)
+        {
+            if (it->second->handler.load() == static_cast<presetrelay::Handler *>(this))
+            {
+                mine.push_back(it->second);
+                it = registry.erase(it);
+            }
+            else
+                ++it;
+        }
+    }
+    // No new request finds the instance now; wait (bounded) for one that is running, then cut the handler.
+    for (auto &inst : mine)
+    {
+        std::unique_lock<std::timed_mutex> turn(inst->turn, std::defer_lock);
+        turn.try_lock_for(std::chrono::seconds(2));
+        inst->handler = nullptr;
+    }
 }
 #endif

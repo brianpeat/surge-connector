@@ -269,6 +269,8 @@ class SurgeSynthProcessor : public juce::AudioProcessor,
 
     // PresetRelay VST3 doorway (SurgeBridgeVST3.cpp): a host asking the edit controller for the bridge's interface id gets it, with no JUCE change.
     int32_t queryIEditController(const Steinberg::TUID iid, void **obj) override;
+    void initPresetRelay();   // SurgeBridge.cpp: builds the handler (and the VST3 slot) once the synth exists
+    void detachPresetRelay(); // first thing in the destructor, before the synth goes
     void detachPresetRelayVST3();
 #if HAS_CLAP_JUCE_EXTENSIONS
     // PresetRelay CLAP extension "presetrelay/1" (SurgeBridgeCLAP.cpp), through the pluginExtension hook of clap-juce-extensions
@@ -467,9 +469,9 @@ class SurgeSynthProcessor : public juce::AudioProcessor,
     void surgeParameterUpdated(const SurgeSynthesizer::ID &id, float value) override;
     void surgeMacroUpdated(long macroNum, float d) override;
 
-    // PresetRelay (see connector/ and SurgeBridge.cpp)
+    // PresetRelay (SurgeBridge.cpp)
     std::string handleRequest(const std::string &requestJson) override;
-    std::string m_connector_current_id;
+    std::shared_ptr<void> presetRelayState;
 
     std::unique_ptr<SurgeSynthesizer> surge;
     std::unordered_map<SurgeSynthesizer::ID, SurgeParamToJuceParamAdapter *> paramsByID;

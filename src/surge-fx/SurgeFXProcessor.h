@@ -31,10 +31,7 @@
 #include "FXOpenSoundControl.h"
 #include "FxPresetAndClipboardManager.h"
 #include <PresetRelay.h>
-#include <PresetRelayCatalog.h>
 #include <memory>
-#include <mutex>
-#include <map>
 #include <atomic>
 #include "sst/filters/HalfRateFilter.h"
 
@@ -69,15 +66,11 @@ class SurgefxAudioProcessor : public juce::AudioProcessor,
     // PresetRelay (SurgeFXBridge.cpp, SurgeFXBridgeVST3.cpp): Surge XT Effects lists its .srgfx effect presets and loads one by id, switching effect type if needed.
     std::string handleRequest(const std::string &requestJson) override;
     int32_t queryIEditController(const Steinberg::TUID iid, void **obj) override;
+    void initPresetRelay();   // builds the handler (and the VST3 slot) at the end of the constructor
+    void detachPresetRelay(); // first thing in the destructor
     void detachPresetRelayVST3();
     std::shared_ptr<void> presetRelayVST3Slot;
-    std::unique_ptr<presetrelay::Catalog> bridgeCatalog;
-    std::mutex bridgeMutex;
-    Surge::Storage::FxUserPreset bridgeScanner;
-    std::map<std::string, Surge::Storage::FxUserPreset::Preset> bridgePresets;
-    std::vector<std::string> bridgeRecords;
-    std::string bridgeCurrentId;
-    void buildPresetRelay();
+    std::shared_ptr<void> presetRelayState;
 
     //==============================================================================
     SurgefxAudioProcessor();
@@ -570,7 +563,8 @@ class SurgefxAudioProcessor : public juce::AudioProcessor,
     std::shared_ptr<Effect> audio_thread_surge_effect;
     std::atomic<bool> resettingFx;
     FxStorage *fxstorage;
-    int storage_id_start, storage_id_end;
+    // zero: the constructor calls resetFxType (which copies this range) before setupStorageRanges sets it
+    int storage_id_start{0}, storage_id_end{0};
 
     int effectNum;
     std::atomic<bool> hasLoadedFxType{false};

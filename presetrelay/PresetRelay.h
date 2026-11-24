@@ -3,7 +3,7 @@
 //
 // A plugin implements ONE function: take a JSON request, return a JSON reply. The same function serves every doorway
 // (AU property, AUv3 channel, VST3 interface, CLAP extension). The helpers below are optional: the access levels,
-// a throttle that enforces the spec's load limit, and small reply builders.
+// a throttle that enforces the spec's load limit, UTF-8 checks, and small reply builders.
 #pragma once
 #include <chrono>
 #include <cstdio>
@@ -14,7 +14,7 @@
 
 namespace presetrelay {
 
-// AU v2 custom property id (spec 4.3).
+// AU v2 custom property id (spec 4.3). The only definition: glue code and tests use this one.
 constexpr unsigned int kAUPropertyID = 1346457454u;
 
 // Limits a plugin applies to requests it receives and replies it sends (spec 8).
@@ -26,11 +26,10 @@ struct Handler {
     virtual ~Handler() = default;
     // request: {"op":"hello"|"list"|"get"|"load"|"current"|..., "v":1, ...}
     // return:  {"ok":true,...} or {"ok":false,"error":{"code":"unsupported","message":"..."}}
-    // Called on a non-audio thread. Keep it quick; `load` should hop to the plugin's UI/message thread.
+    // Called on a non-audio thread, possibly from several threads at once. Must not throw: catch everything and answer `failed`.
+    // Keep it quick; `load` should hop to the plugin's UI/message thread.
     virtual std::string handleRequest(const std::string& requestJson) = 0;
 };
-
-// ---- Access levels (spec 3.1) ----
 
 enum class Access { catalog = 1, audition = 2, insight = 3, open = 4 };
 
@@ -54,8 +53,6 @@ inline Access accessFromName(const std::string& s, Access fallback = Access::ope
 }
 
 inline bool atLeast(Access have, Access need) { return static_cast<int>(have) >= static_cast<int>(need); }
-
-// ---- Throttle (spec 3.2) ----
 
 // Allows at most `perMinute` uses in any sliding 60 s window. perMinute <= 0 means no limit. Thread-safe.
 class Throttle {
@@ -90,12 +87,55 @@ private:
     int perMinute_;
 };
 
-// ---- Reply builders (for plugins without a JSON library) ----
+// Length of the well-formed UTF-8 sequence starting at s[i] (no overlong forms, no surrogates, nothing above U+10FFFF), or 0.
+inline std::size_t utf8SequenceLength(const std::string& s, std::size_t i) {
+    const auto at = [&](std::size_t k) { return static_cast<unsigned char>(s[k]); };
+    const auto cont = [&](std::size_t k) { return k < s.size() && (at(k) & 0xC0) == 0x80; };
+    const unsigned char c = at(i);
+    if (c < 0x80) return 1;
+    if (c >= 0xC2 && c <= 0xDF) return cont(i + 1) ? 2 : 0;
+    if (c >= 0xE0 && c <= 0xEF) {
+        if (!cont(i + 1) || !cont(i + 2)) return 0;
+        if (c == 0xE0 && at(i + 1) < 0xA0) return 0;
+        if (c == 0xED && at(i + 1) >= 0xA0) return 0;
+        return 3;
+    }
+    if (c >= 0xF0 && c <= 0xF4) {
+        if (!cont(i + 1) || !cont(i + 2) || !cont(i + 3)) return 0;
+        if (c == 0xF0 && at(i + 1) < 0x90) return 0;
+        if (c == 0xF4 && at(i + 1) >= 0x90) return 0;
+        return 4;
+    }
+    return 0;
+}
 
+inline bool validUtf8(const std::string& s) {
+    for (std::size_t i = 0; i < s.size();) {
+        const std::size_t n = utf8SequenceLength(s, i);
+        if (n == 0) return false;
+        i += n;
+    }
+    return true;
+}
+
+// Escapes `s` for use inside a JSON string. Each byte that is not part of well-formed UTF-8 becomes U+FFFD.
 inline std::string jsonEscape(const std::string& s) {
     std::string out;
     out.reserve(s.size() + 8);
-    for (unsigned char c : s) {
+    for (std::size_t i = 0; i < s.size();) {
+        const unsigned char c = static_cast<unsigned char>(s[i]);
+        if (c >= 0x80) {
+            const std::size_t n = utf8SequenceLength(s, i);
+            if (n == 0) {
+                out += "\xEF\xBF\xBD";
+                ++i;
+            } else {
+                out.append(s, i, n);
+                i += n;
+            }
+            continue;
+        }
+        ++i;
         switch (c) {
             case '"': out += "\\\""; break;
             case '\\': out += "\\\\"; break;

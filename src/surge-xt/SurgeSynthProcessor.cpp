@@ -190,11 +190,13 @@ SurgeSynthProcessor::SurgeSynthProcessor()
 
     midiKeyboardState.addListener(this);
     oscHandler.initOSC(this, surge);
+    initPresetRelay();
 }
 
 SurgeSynthProcessor::~SurgeSynthProcessor()
 {
     detachPresetRelayVST3();
+    detachPresetRelay();
 #if HAS_CLAP_JUCE_EXTENSIONS
     detachPresetRelayCLAP();
 #endif
@@ -548,6 +550,12 @@ void SurgeSynthProcessor::prepareToPlay(double sr, int samplesPerBlock)
 void SurgeSynthProcessor::releaseResources()
 {
     // When playback stops, you can use this as an opportunity to free up any spare memory, etc.
+
+    // The audio thread is gone until the next prepareToPlay + process: say so, so a patch queued by setStateInformation (or by the
+    // PresetRelay load) is applied at once by processAudioThreadOpsWhenAudioEngineUnavailable instead of waiting for a block
+    // that is not coming.
+    if (surge)
+        surge->audio_processing_active = false;
 }
 
 bool SurgeSynthProcessor::isBusesLayoutSupported(const BusesLayout &layouts) const

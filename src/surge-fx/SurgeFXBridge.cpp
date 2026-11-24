@@ -5,93 +5,401 @@
  * when the preset belongs to another effect. Built on presetrelay::Catalog, so the protocol itself is not in this file. GPL-3.0-or-later.
  */
 #include "SurgeFXProcessor.h"
-#include <cstdlib>
-#include <sstream>
+#include <PresetRelay.h>
+#include <PresetRelayCatalog.h>
+#include <PresetRelay_VST3.h>
+#include <SurgeRelayShared.h>
+#include <algorithm>
+#include <cmath>
+#include <unordered_map>
 
 namespace
 {
-std::string presetId(const Surge::Storage::FxUserPreset::Preset &p)
+using presetrelay::LoadOutcome;
+using FxPreset = Surge::Storage::FxUserPreset::Preset;
+
+constexpr int kHopMs = 10000;       // wait for the message thread (at most 25 s, spec 3.2)
+constexpr int kTypeSwitchMs = 400;  // how long the audio thread gets to start switching the effect type before the editor's own path is used
+constexpr int kTypeFinishMs = 2000; // how long it gets to finish
+constexpr int kRefreshSeconds = 60; // a hello this long after the last scan starts a new one in the background
+constexpr int kRetrySeconds = 20;   // after a scan that failed
+
+struct Entry
 {
-    std::string sub = p.subPath.generic_string();
-    return std::string(p.isFactory ? "factory/" : "user/") + fx_type_names[p.type] + "/" + (sub.empty() ? "" : sub + "/") + p.name;
+    std::string id;
+    FxPreset preset;
+};
+
+// One finished scan. Readers hold a shared_ptr, so a new scan replaces it without touching a request in progress.
+struct Catalogue
+{
+    std::vector<Entry> entries;
+    std::unordered_map<std::string, std::size_t> byId;
+    std::vector<std::string> records;
+    std::string revision;
+    bool partial{false};
+};
+
+std::string typeName(const FxPreset &p) { return fx_type_names[p.type]; }
+
+std::string baseId(const FxPreset &p)
+{
+    const std::string sub = surgerelay::cleanText(p.subPath.generic_string(), 200);
+    return std::string(p.isFactory ? "factory/" : "user/") + typeName(p) + "/" + (sub.empty() ? "" : sub + "/") +
+           surgerelay::cleanText(p.name, 200);
 }
 
-std::string recordJson(const Surge::Storage::FxUserPreset::Preset &p)
+std::string recordJson(const Entry &e)
 {
     using presetrelay::jsonEscape;
-    std::ostringstream o;
-    o << "{\"id\":\"" << jsonEscape(presetId(p)) << "\",\"name\":\"" << jsonEscape(p.name) << "\",\"origin\":\"" << (p.isFactory ? "factory" : "user")
-      << "\",\"categories\":[[\"" << jsonEscape(fx_type_names[p.type]);
-    std::string sub = p.subPath.generic_string();
-    std::istringstream ss(sub);
-    for (std::string part; std::getline(ss, part, '/');)
+    const FxPreset &p = e.preset;
+    std::string o = "{\"id\":\"" + jsonEscape(e.id) + "\",\"name\":\"" + surgerelay::jsonText(p.name) +
+                    "\",\"origin\":\"" + (p.isFactory ? "factory" : "user") + "\",\"categories\":[[\"" +
+                    jsonEscape(typeName(p));
+    const std::string sub = p.subPath.generic_string();
+    std::size_t start = 0;
+    while (start <= sub.size())
+    {
+        auto end = sub.find('/', start);
+        if (end == std::string::npos)
+            end = sub.size();
+        const std::string part = surgerelay::cleanText(sub.substr(start, end - start), 128);
         if (!part.empty())
-            o << "\",\"" << jsonEscape(part);
-    o << "\"]],\"fields\":{\"effect\":[\"" << jsonEscape(fx_type_names[p.type]) << "\"]}}";
-    return o.str();
+            o += "\",\"" + jsonEscape(part);
+        start = end + 1;
+    }
+    return o + "\"]],\"fields\":{\"effect\":[\"" + jsonEscape(typeName(p)) + "\"]}}";
 }
 
-struct MainThreadJob
+bool unreadableFolder(const fs::path &p)
 {
-    std::function<presetrelay::LoadOutcome()> job;
-    presetrelay::LoadOutcome result;
+    std::error_code ec;
+    if (!fs::exists(p, ec))
+        return false;
+    fs::directory_iterator it(p, ec);
+    return (bool)ec;
+}
+
+class RelayState : public std::enable_shared_from_this<RelayState>
+{
+  public:
+    explicit RelayState(SurgefxAudioProcessor &p) : proc(p) {}
+
+    void init()
+    {
+        catalog = std::make_unique<presetrelay::Catalog>("Surge XT Effects", "org.surge-synth-team.surge-xt-fx",
+                                                         presetrelay::Access::audition, 30);
+        const std::weak_ptr<RelayState> w = weak_from_this();
+        auto &c = *catalog;
+        c.kind = "effect";
+        c.timeoutMs = 30000;
+        c.isReady = [w] {
+            auto s = w.lock();
+            return s && s->ready.load();
+        };
+        c.records = [w] {
+            auto s = w.lock();
+            auto cat = s ? s->snapshot() : nullptr;
+            return cat ? cat->records : std::vector<std::string>();
+        };
+        c.revision = [w] {
+            auto s = w.lock();
+            auto cat = s ? s->snapshot() : nullptr;
+            return cat ? cat->revision : std::string("building");
+        };
+        c.load = [w](const std::string &id) {
+            auto s = w.lock();
+            return s ? s->load(id) : LoadOutcome::busy();
+        };
+        c.current = [w] {
+            auto s = w.lock();
+            return s ? s->currentSound() : presetrelay::CurrentSound{};
+        };
+        // Changing the effect and writing its parameters belongs on the message thread; `busy` when it does not answer in time.
+        c.runLoad = [](const std::function<LoadOutcome()> &job) {
+            return surgerelay::onMainThread(job, kHopMs);
+        };
+        baseline = parameterValues(); // the untouched instance: nothing to lose yet
+    }
+
+    void retire()
+    {
+        life.retire();
+        if (catalog)
+            catalog->shutdown();
+        worker.stopAndJoin();
+    }
+
+    std::string handle(const std::string &req)
+    {
+        if (!life.isAlive())
+            return presetrelay::errorReply("busy", "the plugin is closing");
+        std::string op;
+        const bool parsed = req.size() <= presetrelay::kMaxRequestBytes &&
+                            presetrelay::mini::readText(req, "op", op) == presetrelay::mini::Presence::ok;
+        scanIfNeeded(parsed && op == "hello");
+        std::string out = catalog->handleRequest(req);
+        if (parsed && op == "hello" && out.compare(0, 11, "{\"ok\":true,") == 0)
+            if (auto c = snapshot(); c && c->partial)
+                surgerelay::addToReply(out, ",\"partial\":true");
+        return out;
+    }
+
+  private:
+    std::shared_ptr<const Catalogue> snapshot()
+    {
+        std::lock_guard<std::mutex> g(m);
+        return cat;
+    }
+
+    // ---- the catalogue: built on a background thread, never inside a request ----------------------------------------------
+    void scanIfNeeded(bool isHello)
+    {
+        const auto now = std::chrono::steady_clock::now();
+        std::lock_guard<std::mutex> g(m);
+        const bool first = !ready.load();
+        const auto age = std::chrono::duration_cast<std::chrono::seconds>(now - lastScan).count();
+        if ((first && (!everScanned || age >= kRetrySeconds)) || (!first && isHello && age >= kRefreshSeconds))
+        {
+            everScanned = true;
+            lastScan = now;
+            worker.start([this](const std::atomic<bool> &stop) { scan(stop); });
+        }
+    }
+
+    void scan(const std::atomic<bool> &stop)
+    {
+        try
+        {
+            auto result = buildCatalogue(stop);
+            if (!result || stop.load())
+                return;
+            std::lock_guard<std::mutex> g(m);
+            cat = std::move(result); // published last: a scan that throws leaves the earlier state as it was
+            lastScan = std::chrono::steady_clock::now();
+            ready = true;
+        }
+        catch (...)
+        {
+            // ready stays as it was; the next request after kRetrySeconds tries again
+        }
+    }
+
+    std::shared_ptr<Catalogue> buildCatalogue(const std::atomic<bool> &stop)
+    {
+        auto out = std::make_shared<Catalogue>();
+        if (unreadableFolder(proc.storage->userFXPath) || unreadableFolder(proc.storage->datapath / "fx_presets"))
+            out->partial = true;
+
+        // A scanner of its own, so a rescan never changes the list a request is reading.
+        Surge::Storage::FxUserPreset scanner;
+        scanner.doPresetRescan(proc.storage.get(), true);
+        if (stop.load())
+            return nullptr;
+
+        std::vector<Entry> all;
+        std::unordered_map<std::string, int> count;
+        for (const auto &kv : scanner.getPresetsByType())
+            for (const auto &p : kv.second)
+            {
+                if (p.type <= 0 || p.type >= n_fx_types)
+                    continue;
+                Entry e;
+                e.preset = p;
+                e.id = baseId(p);
+                ++count[e.id];
+                all.push_back(std::move(e));
+            }
+        for (auto &e : all)
+            if (count[e.id] > 1) // two presets with one id: both get a suffix from the full path
+                e.id += "#" + surgerelay::shortHash(e.preset.file);
+        std::sort(all.begin(), all.end(), [](const Entry &a, const Entry &b) { return a.id < b.id; });
+
+        presetrelay::Fnv rev;
+        rev.add("surge-fx-relay-1");
+        for (auto &e : all)
+        {
+            out->byId.emplace(e.id, out->entries.size());
+            const std::string rec = recordJson(e);
+            out->records.push_back(rec);
+            rev.add(rec);
+            out->entries.push_back(std::move(e));
+        }
+        rev.add(out->partial ? "partial" : "complete");
+        out->revision = rev.hex();
+        return out;
+    }
+
+    // ---- modified: the parameters against what the last relay load (or a fresh instance) left -------------------------------------
+    std::vector<float> parameterValues()
+    {
+        std::vector<float> v;
+        for (auto *p : proc.getParameters())
+            v.push_back(p->getValue());
+        return v;
+    }
+
+    bool differsFromBaseline()
+    {
+        const auto now = parameterValues();
+        if (now.size() != baseline.size())
+            return true;
+        for (std::size_t i = 0; i < now.size(); ++i)
+            if (std::fabs(now[i] - baseline[i]) > 1e-4f)
+                return true;
+        return false;
+    }
+
+    juce::RangedAudioParameter *findTypeParameter()
+    {
+        for (auto *p : proc.getParameters())
+            if (auto *r = dynamic_cast<juce::RangedAudioParameter *>(p); r && r->paramID == "fxtype")
+                return r;
+        return nullptr;
+    }
+
+    // ---- load: runs on the message thread (Catalog::runLoad) ----------------------------------------------------------------------
+    LoadOutcome load(const std::string &id)
+    {
+        const auto c = snapshot();
+        if (!c)
+            return LoadOutcome::busy();
+        const auto it = c->byId.find(id);
+        if (it == c->byId.end())
+            return LoadOutcome::notFound();
+        const FxPreset p = c->entries[it->second].preset;
+
+        auto use = life.use();
+        if (!use)
+            return LoadOutcome::busy();
+
+        if (p.type != proc.getEffectType())
+        {
+            // Changing the effect deletes the running one. When the audio thread is running, ask it to do the change, as a host
+            // does by automating the "FX Type" parameter (processBlock switches the effect on its own thread, and its last step
+            // marks the preset name as no longer valid, which the marker below turns into a completion signal). When it does not
+            // answer in time nothing is running, and the editor's own call is used.
+            proc.setCurrentPresetName("\x01");
+            if (auto *typeParam = findTypeParameter())
+                typeParam->setValueNotifyingHost(typeParam->convertTo0to1((float)p.type));
+            const auto began = std::chrono::steady_clock::now();
+            for (;;)
+            {
+                const bool typeDone = proc.getEffectType() == p.type;
+                if (typeDone && proc.getCurrentPresetName().empty())
+                    break;
+                const auto waited = std::chrono::steady_clock::now() - began;
+                if (!typeDone && waited > std::chrono::milliseconds(kTypeSwitchMs))
+                {
+                    proc.resetFxType(p.type, true);
+                    break;
+                }
+                if (waited > std::chrono::milliseconds(kTypeFinishMs))
+                    break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+        }
+        if (proc.getEffectType() != p.type)
+            return LoadOutcome::busy(); // changed under us
+        proc.loadFxPreset(p);
+        proc.setCurrentPresetName(p.name);
+
+        baseline = parameterValues();
+        {
+            std::lock_guard<std::mutex> g(m);
+            loadedId = id;
+            reportedId = id;
+        }
+        catalog->events.post("{\"type\":\"presetChanged\",\"id\":\"" + presetrelay::jsonEscape(id) + "\"}");
+        return LoadOutcome::ok();
+    }
+
+    // ---- current: runs on the message thread ----------------------------------------------------------------------------------------
+    presetrelay::CurrentSound currentSound()
+    {
+        presetrelay::CurrentSound out;
+        auto use = life.use();
+        if (!use)
+            return out;
+        out.modified = differsFromBaseline();
+        const auto c = snapshot();
+        std::string id;
+        const std::string name = proc.getCurrentPresetName();
+        if (c && !name.empty())
+        {
+            std::string preferred;
+            {
+                std::lock_guard<std::mutex> g(m);
+                preferred = loadedId;
+            }
+            const int type = proc.getEffectType();
+            const auto pit = c->byId.find(preferred);
+            if (pit != c->byId.end() && c->entries[pit->second].preset.type == type &&
+                c->entries[pit->second].preset.name == name)
+                id = preferred;
+            else
+                for (const auto &e : c->entries)
+                    if (e.preset.type == type && e.preset.name == name)
+                    {
+                        id = e.id;
+                        break;
+                    }
+        }
+        out.id = id;
+        bool changed = false;
+        {
+            std::lock_guard<std::mutex> g(m);
+            if (id != reportedId)
+            {
+                reportedId = id;
+                changed = !id.empty();
+            }
+        }
+        if (changed)
+            catalog->events.post("{\"type\":\"presetChanged\",\"id\":\"" + presetrelay::jsonEscape(id) + "\"}");
+        return out;
+    }
+
+    SurgefxAudioProcessor &proc;
+    surgerelay::Liveness life;
+    std::unique_ptr<presetrelay::Catalog> catalog;
+    std::mutex m; // guards cat, the scan times and the ids
+    std::shared_ptr<const Catalogue> cat;
+    std::atomic<bool> ready{false};
+    bool everScanned{false};
+    std::chrono::steady_clock::time_point lastScan{};
+    std::string loadedId, reportedId;
+    std::vector<float> baseline; // message thread only
+    surgerelay::Worker worker;   // last member: destroyed (and joined) first
 };
 } // namespace
 
-void SurgefxAudioProcessor::buildPresetRelay()
+void SurgefxAudioProcessor::initPresetRelay()
 {
-    if (bridgeCatalog)
-        return;
-    bridgeCatalog = std::make_unique<presetrelay::Catalog>("Surge XT Effects", "org.surge-synth-team.surge-xt-fx", presetrelay::Access::audition, 30);
-    auto &cat = *bridgeCatalog;
-    cat.kind = "effect";
-    cat.version = "";
+    auto s = std::make_shared<RelayState>(*this);
+    s->init();
+    presetRelayState = s;
+    // Created here, not on the first query, so two threads asking at once cannot both create it.
+    presetRelayVST3Slot = std::make_shared<presetrelay::vst3::Slot>(static_cast<presetrelay::Handler *>(this));
+}
 
-    // The preset index is built once, on the first request (a scan of the factory and user .srgfx folders).
-    bridgeScanner.doPresetRescan(storage.get(), true);
-    for (auto &kv : bridgeScanner.getPresetsByType())
-        for (auto &p : kv.second)
-            if (p.type > 0 && p.type < n_fx_types && bridgePresets.emplace(presetId(p), p).second)
-                bridgeRecords.push_back(recordJson(p));
-
-    cat.records = [this] { return bridgeRecords; };
-    cat.load = [this](const std::string &id) -> presetrelay::LoadOutcome {
-        auto it = bridgePresets.find(id);
-        if (it == bridgePresets.end())
-            return presetrelay::LoadOutcome::notFound();
-        const auto p = it->second;
-        if (p.type != getEffectType())
-            resetFxType(p.type, true);
-        loadFxPreset(p);
-        setCurrentPresetName(p.name);
-        std::lock_guard<std::mutex> g(bridgeMutex);
-        bridgeCurrentId = id;
-        return presetrelay::LoadOutcome::ok();
-    };
-    cat.current = [this] {
-        std::lock_guard<std::mutex> g(bridgeMutex);
-        return presetrelay::CurrentSound{bridgeCurrentId, false};
-    };
-    // Changing the effect and writing its parameters belongs on the message thread; wait for it.
-    cat.runLoad = [](const std::function<presetrelay::LoadOutcome()> &job) {
-        MainThreadJob m{job, presetrelay::LoadOutcome::busy()};
-        juce::MessageManager::getInstance()->callFunctionOnMessageThread(
-            [](void *p) -> void * {
-                auto *mj = static_cast<MainThreadJob *>(p);
-                mj->result = mj->job();
-                return nullptr;
-            },
-            &m);
-        return m.result;
-    };
+void SurgefxAudioProcessor::detachPresetRelay()
+{
+    if (auto s = std::static_pointer_cast<RelayState>(presetRelayState))
+        s->retire();
 }
 
 std::string SurgefxAudioProcessor::handleRequest(const std::string &requestJson)
 {
-    static std::mutex buildMutex;
+    auto s = std::static_pointer_cast<RelayState>(presetRelayState);
+    if (!s)
+        return presetrelay::errorReply("busy", "the plugin is not ready");
+    try
     {
-        std::lock_guard<std::mutex> g(buildMutex);
-        buildPresetRelay();
+        return s->handle(requestJson);
     }
-    return bridgeCatalog->handleRequest(requestJson);
+    catch (...)
+    {
+        return presetrelay::errorReply("failed", "internal error");
+    }
 }

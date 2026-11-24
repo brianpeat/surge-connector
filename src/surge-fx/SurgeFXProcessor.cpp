@@ -175,9 +175,14 @@ SurgefxAudioProcessor::SurgefxAudioProcessor()
     resettingFx = false;
 
     oscHandler.initOSC(this, storage);
+    initPresetRelay();
 }
 
-SurgefxAudioProcessor::~SurgefxAudioProcessor() { detachPresetRelayVST3(); }
+SurgefxAudioProcessor::~SurgefxAudioProcessor()
+{
+    detachPresetRelayVST3();
+    detachPresetRelay();
+}
 
 //==============================================================================
 const juce::String SurgefxAudioProcessor::getName() const { return JucePlugin_Name; }

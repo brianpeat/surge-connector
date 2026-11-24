@@ -1,8 +1,8 @@
 diff --git a/modules/juce_audio_plugin_client/juce_audio_plugin_client_AU_1.mm b/modules/juce_audio_plugin_client/juce_audio_plugin_client_AU_1.mm
-index 2e45c21..8c45818 100644
+index 2e45c21..0aa3e72 100644
 --- a/modules/juce_audio_plugin_client/juce_audio_plugin_client_AU_1.mm
 +++ b/modules/juce_audio_plugin_client/juce_audio_plugin_client_AU_1.mm
-@@ -75,6 +75,13 @@
+@@ -75,6 +75,89 @@
  #include <juce_audio_basics/native/juce_AudioWorkgroup_mac.h>
  #include <juce_audio_processors_headless/format_types/juce_LegacyAudioParameter.h>
  #include <juce_audio_processors_headless/format_types/juce_AU_Shared.h>
@@ -11,22 +11,98 @@ index 2e45c21..8c45818 100644
 +#if __has_include(<PresetRelay.h>)
 + #include <PresetRelay.h>
 + #include <PresetRelay_AU.h>
++ #include <mutex>
++ #include <string>
 + #define JUCE_PRESET_BRIDGE 1
++
++namespace presetrelayhook
++{
++    // Runs one request. A handler that throws, or a reply that cannot become a property list, gives an error dictionary, never null and
++    // never the previous reply. Returns a +1 retained dictionary, or nullptr only when even the error cannot be built.
++    inline CFPropertyListRef answer (presetrelay::Handler& handler, const std::string& request)
++    {
++        try
++        {
++            std::string reply;
++
++            try { reply = handler.handleRequest (request); }
++            catch (...) { reply = presetrelay::errorReply ("failed", "internal error"); }
++
++            if (auto* plist = presetrelay::jsonToCF (reply))
++                return plist;
++
++            return presetrelay::jsonToCF (presetrelay::errorReply ("failed", "the reply could not be converted"));
++        }
++        catch (...)
++        {
++            return nullptr;
++        }
++    }
++
++    // The last reply, kept for the host's next read of the property. Every access holds the mutex; requests run outside it.
++    // The destructor releases the reply, so it goes away with the wrapper.
++    class ReplySlot
++    {
++    public:
++        ReplySlot() = default;
++        ReplySlot (const ReplySlot&) = delete;
++        ReplySlot& operator= (const ReplySlot&) = delete;
++        ~ReplySlot() { replace (nullptr); }
++
++        // Takes the caller's +1 reference.
++        void replace (CFPropertyListRef newValue)
++        {
++            CFPropertyListRef old;
++
++            {
++                std::lock_guard<std::mutex> guard (lock);
++                old = value;
++                value = newValue;
++            }
++
++            if (old != nullptr)
++                CFRelease (old);
++        }
++
++        // Takes the caller's +1 reference only when it returns true.
++        bool storeIfEmpty (CFPropertyListRef newValue)
++        {
++            std::lock_guard<std::mutex> guard (lock);
++
++            if (value != nullptr)
++                return false;
++
++            value = newValue;
++            return true;
++        }
++
++        // A +1 reference to the stored reply, or nullptr when there is none.
++        CFPropertyListRef copy()
++        {
++            std::lock_guard<std::mutex> guard (lock);
++            return value != nullptr ? (CFPropertyListRef) CFRetain (value) : nullptr;
++        }
++
++    private:
++        std::mutex lock;
++        CFPropertyListRef value = nullptr;
++    };
++}
 +#endif
  #include <juce_gui_basics/detail/juce_ComponentPeerHelpers.h>
  
  #if JucePlugin_Enable_ARA
-@@ -125,6 +132,9 @@
+@@ -125,6 +208,9 @@
  
      ScopedJuceInitialiser_GUI scopedInitialiser;
      std::unique_ptr<AudioProcessor> juceFilter { createPluginFilterOfType (AudioProcessor::wrapperType_AudioUnit) };
 +   #if JUCE_PRESET_BRIDGE
-+    CFPropertyListRef presetRelayResponse = nullptr;
++    presetrelayhook::ReplySlot presetRelayReply;
 +   #endif
  };
  
  //==============================================================================
-@@ -497,6 +507,15 @@ ComponentResult GetPropertyInfo (AudioUnitPropertyID inID,
+@@ -497,6 +583,15 @@ ComponentResult GetPropertyInfo (AudioUnitPropertyID inID,
                      outWritable = true;
                      return noErr;
  
@@ -42,7 +118,7 @@ index 2e45c21..8c45818 100644
                  case kAudioUnitProperty_SupportsMPE:
                      outDataSize = sizeof (UInt32);
                      outWritable = false;
-@@ -529,6 +548,24 @@ ComponentResult GetProperty (AudioUnitPropertyID inID,
+@@ -529,6 +624,47 @@ ComponentResult GetProperty (AudioUnitPropertyID inID,
          {
              switch (inID)
              {
@@ -53,13 +129,36 @@ index 2e45c21..8c45818 100644
 +                    if (handler == nullptr)
 +                        return kAudioUnitErr_InvalidProperty;
 +
-+                    if (presetRelayResponse == nullptr)   // nothing requested yet: answer "hello"
-+                        presetRelayResponse = presetrelay::jsonToCF (handler->handleRequest ("{\"op\":\"hello\",\"v\":1}"));
-+                    if (presetRelayResponse == nullptr)
++                    if (outData == nullptr)
 +                        return kAudioUnitErr_InvalidPropertyValue;
 +
-+                    CFRetain (presetRelayResponse);   // the caller releases it
-+                    *(CFPropertyListRef*) outData = presetRelayResponse;
++                    auto reply = presetRelayReply.copy();
++
++                    if (reply == nullptr)   // nothing requested yet: answer "hello"
++                    {
++                        auto fresh = presetrelayhook::answer (*handler, "{\"op\":\"hello\",\"v\":1}");
++
++                        if (fresh == nullptr)
++                            return kAudioUnitErr_InvalidPropertyValue;
++
++                        CFRetain (fresh);
++
++                        if (presetRelayReply.storeIfEmpty (fresh))
++                        {
++                            reply = fresh;
++                        }
++                        else   // a Set stored its reply first: that one wins
++                        {
++                            CFRelease (fresh);
++                            CFRelease (fresh);
++                            reply = presetRelayReply.copy();
++                        }
++                    }
++
++                    if (reply == nullptr)
++                        return kAudioUnitErr_InvalidPropertyValue;
++
++                    *(CFPropertyListRef*) outData = reply;   // the caller releases it
 +                    return noErr;
 +                }
 +               #endif
@@ -67,7 +166,7 @@ index 2e45c21..8c45818 100644
                  case kAudioUnitProperty_ParameterClumpName:
  
                      if (auto* clumpNameInfo = (AudioUnitParameterNameInfo*) outData)
-@@ -726,6 +763,21 @@ ComponentResult SetProperty (AudioUnitPropertyID inID,
+@@ -726,6 +862,19 @@ ComponentResult SetProperty (AudioUnitPropertyID inID,
          {
              switch (inID)
              {
@@ -75,13 +174,11 @@ index 2e45c21..8c45818 100644
 +                case presetrelay::kAUPropertyID:
 +                {
 +                    auto* handler = dynamic_cast<presetrelay::Handler*> (juceFilter.get());
-+                    if (handler == nullptr || inDataSize < sizeof (CFPropertyListRef))
++                    if (handler == nullptr || inData == nullptr || inDataSize < sizeof (CFPropertyListRef))
 +                        return kAudioUnitErr_InvalidProperty;
 +
-+                    auto response = handler->handleRequest (presetrelay::cfToJson (*(CFPropertyListRef const*) inData));
-+                    if (presetRelayResponse != nullptr)
-+                        CFRelease (presetRelayResponse);
-+                    presetRelayResponse = presetrelay::jsonToCF (response);
++                    // The request runs outside the slot's mutex; a failed reply is stored as an error dictionary, so the next read never returns an old one.
++                    presetRelayReply.replace (presetrelayhook::answer (*handler, presetrelay::cfToJson (*(CFPropertyListRef const*) inData)));
 +                    return noErr;
 +                }
 +               #endif

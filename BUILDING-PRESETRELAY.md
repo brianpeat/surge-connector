@@ -4,16 +4,14 @@ Adds a PresetRelay handler (https://github.com/brianpeat/PresetRelay) to Surge X
 patch library (factory, third party and user patches: name, category, author, favorite, file location), read the user's
 favorites as a collection, and load or export a patch by id, through the plugin itself.
 
-Changes: `src/surge-xt/SurgeBridge.cpp` (the handler; metadata from Surge's `PatchDB`, falls back to the in-memory patch
-list), `SurgeSynthProcessor.h` (implements `presetrelay::Handler`), `src/surge-xt/CMakeLists.txt` (source + include path),
-`presetrelay/` (reference headers), and one patch to the bundled JUCE in `patches/juce-au-presetrelay-hook.patch`
-(lets a plugin that implements the handler answer the AU property; it applies to Surge's JUCE 8 era; Odin 2's JUCE 6 needs the
-other variant in the PresetRelay repo).
+Changes: `src/surge-xt/SurgeBridge.cpp` (the handler on `presetrelay::Catalog`; metadata from Surge's `PatchDB`), `src/surge-fx/SurgeFXBridge.cpp`
+(effect presets), `presetrelay/` (reference headers plus `SurgeRelayShared.h`, which belongs to this fork), the processor headers (implement
+`presetrelay::Handler`), the CMake files (sources and include path), and one patch to the bundled JUCE in `patches/juce-au-presetrelay-hook.patch`
+(lets a plugin that implements the handler answer the AU property; it applies to Surge's JUCE 8 era; Odin 2's JUCE 6 needs the other variant in the PresetRelay repo).
 
-Surge-specific notes: Surge builds its patch index lazily, so the handler calls `initializePatchDb()` and waits for it (first
-call can take a few seconds; the count can change while it is still indexing). `load` and `exportState` use the patch file
-itself, which is Surge's own state format (`enqueuePatchForLoad` / `setStateInformation` take it unchanged). No `rights` are
-reported (Surge doesn't say), which exercises the "unspecified rights" case.
+Surge-specific notes: Surge builds its patch index lazily, so the catalog is built once on a background thread (`initializePatchDb()` and a wait for its
+jobs); until it is done every op except `hello` answers `busy` and `hello` says `building:true`. `load` and `exportState` use the state inside the patch
+file (the chunk after the .fxp header), which is what `setStateInformation` takes. No `rights` are reported (Surge doesn't say).
 
 Build (macOS, arm64):
 ```

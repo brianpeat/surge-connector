@@ -9,8 +9,7 @@
 
 int32_t SurgeSynthProcessor::queryIEditController(const Steinberg::TUID iid, void **obj)
 {
-    if (!presetRelayVST3Slot)
-        presetRelayVST3Slot = std::make_shared<presetrelay::vst3::Slot>(static_cast<presetrelay::Handler *>(this));
+    // The slot is made once, in initPresetRelay (SurgeBridge.cpp), so concurrent queries only read it.
     return presetrelay::vst3::query(std::static_pointer_cast<presetrelay::vst3::Slot>(presetRelayVST3Slot), iid, obj);
 }
 
