@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // PresetRelay VST3 doorway (spec v0.2 draft, section 4.4).
-// Needs the VST3 SDK headers (pluginterfaces/base/funknown.h and ibstream.h) on the include path and PresetRelay.h from reference/cpp.
+// Needs the VST3 SDK headers (pluginterfaces/base/funknown.h and ibstream.h) on the include path and PresetRelay.h from plugin/sdk/cpp.
 // Header only; it does not need any SDK .cpp file, so it also links into builds that carry no SDK sources.
 //
 // How a plugin takes part: implement presetrelay::Handler (one function, JSON in, JSON out, as for every format), and when a host calls

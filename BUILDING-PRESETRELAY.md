@@ -25,4 +25,4 @@ cmake --build build --target surge-xt_AU
 
 
 ## Formats
-Audio Unit (property, needs the JUCE patch), VST3 (`SurgeBridgeVST3.cpp`, no JUCE patch) and CLAP (`SurgeBridgeCLAP.cpp`, needs the small clap-juce-extensions hook above, which is generic: a processor can return its own plugin extension). Surge XT Effects has AU and VST3 (`src/surge-fx/SurgeFXBridge*.cpp`), `kind: effect`. Check any build with `tools/relaycheck/relaycheck` from the PresetRelay repo.
+Audio Unit (property, needs the JUCE patch), VST3 (`SurgeBridgeVST3.cpp`, no JUCE patch) and CLAP (`SurgeBridgeCLAP.cpp`, needs the small clap-juce-extensions hook above, which is generic: a processor can return its own plugin extension). Surge XT Effects has AU and VST3 (`src/surge-fx/SurgeFXBridge*.cpp`), `kind: effect`. Check any build with `build/relaycheck` from the PresetRelay repo.
