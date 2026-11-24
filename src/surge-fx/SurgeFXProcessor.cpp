@@ -724,6 +724,9 @@ void SurgefxAudioProcessor::setStateInformation(const void *data, int sizeInByte
 
             auto nm = xmlState->getStringAttribute("currentPresetName", "").toStdString();
             setCurrentPresetName(nm);
+            // Restored settings may have been edited since the preset was loaded: the relay's copy marks that as unknown.
+            if (presetNameHook)
+                presetNameHook(nm, false);
             pendingPresetName = nm;
         }
     }

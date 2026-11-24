@@ -4575,12 +4575,14 @@ void loadPatchInBackgroundThread(SurgeSynthesizer *sy)
     {
         Patch p = synth->storage.patch_list[synth->patchid];
         synth->storage.lastLoadedPatch = p.path;
+        synth->noteLastLoadedPatch();
         for (auto &it : synth->patchLoadedListeners)
             (it.second)(p.path);
     }
     if (had_patchid_file)
     {
         synth->storage.lastLoadedPatch = ppath;
+        synth->noteLastLoadedPatch();
         for (auto &it : synth->patchLoadedListeners)
             (it.second)(ppath);
     }
@@ -4609,6 +4611,7 @@ void SurgeSynthesizer::processAudioThreadOpsWhenAudioEngineUnavailable(bool dang
             loadPatch(patchid_queue);
             Patch p = storage.patch_list[patchid_queue];
             storage.lastLoadedPatch = p.path;
+            noteLastLoadedPatch();
             patchid_queue = -1;
         }
 
@@ -4633,11 +4636,13 @@ void SurgeSynthesizer::processAudioThreadOpsWhenAudioEngineUnavailable(bool dang
                 loadPatch(ptid);
                 Patch patch = storage.patch_list[ptid];
                 storage.lastLoadedPatch = patch.path;
+                noteLastLoadedPatch();
             }
             else
             {
                 loadPatchByPath(patchid_file, -1, s.c_str(), asPreset);
                 storage.lastLoadedPatch = p;
+                noteLastLoadedPatch();
             }
             patchid_file[0] = 0;
         }
@@ -5613,6 +5618,8 @@ void SurgeSynthesizer::loadFromDawExtraState()
     }
 
     storage.lastLoadedPatch = des.lastLoadedPatch;
+    // A restored state names its own patch: the relay's copy follows it.
+    noteLastLoadedPatch();
 }
 
 void SurgeSynthesizer::swapMetaControllers(int c1, int c2)

@@ -203,6 +203,14 @@ class RelayState : public std::enable_shared_from_this<RelayState>
             if (auto s = w.lock())
                 s->noteLoadedFile(path_to_string(p));
         });
+
+        // Surge's own copy of the loaded patch's path is not safe to read from another thread, so every change of it (browser, host
+        // preset change, restored state, relay load) is copied here; `current` and the state marker read the copy.
+        setLastFile(proc.surge->storage.lastLoadedPatch.u8string());
+        proc.surge->lastLoadedPatchHook = [w](const fs::path &p) {
+            if (auto s = w.lock())
+                s->setLastFile(p.u8string());
+        };
     }
 
     // First thing in the processor's destructor: after this nothing touches the processor or the synth.
@@ -554,43 +562,67 @@ class RelayState : public std::enable_shared_from_this<RelayState>
             auto use = life.use();
             if (!use)
                 return LoadOutcome::busy();
+            // A patch file has no record of where it came from, so the loaded path is set here as Surge's own browser sets it; the
+            // saved state then names this patch and a restore resolves to it again.
+            proc.surge->storage.lastLoadedPatch = string_to_path(c->entries[it->second].file);
+            proc.surge->noteLastLoadedPatch();
             std::lock_guard<std::mutex> g(m);
-            loadedId = id;
-            marker = proc.surge->storage.lastLoadedPatch.generic_u8string();
             reportedId = id;
         }
         catalog->events.post("{\"type\":\"presetChanged\",\"id\":\"" + presetrelay::jsonEscape(id) + "\"}");
         return LoadOutcome::ok();
     }
 
-    // ---- current: runs on the message thread ----------------------------------------------------------------------------------------
+    // ---- current: the relay's own request runs on the message thread; the state marker calls it on the thread that saves state --------
+    // Never waits on a lock a load holds. The id is the catalog sound whose file is the loaded patch's file, nothing else: a patch from
+    // elsewhere, a catalog not scanned yet, or a load still in flight gives no id.
     presetrelay::CurrentSound currentSound()
     {
         presetrelay::CurrentSound out;
-        auto use = life.use();
-        if (!use || !proc.surge)
+        auto use = life.tryUse();
+        if (!use || !proc.surge || !settled())
             return out;
         out.modified = proc.surge->storage.getPatch().isDirty.load();
-        const auto c = snapshot();
-        const std::string last = proc.surge->storage.lastLoadedPatch.generic_u8string();
-        std::string id;
+        std::string file;
         {
-            std::lock_guard<std::mutex> g(m);
-            // A load made through the relay is current until Surge records another file (its own browser, a preset change in the host).
-            if (!loadedId.empty() && last == marker)
-                id = loadedId;
+            std::lock_guard<std::mutex> g(fileM);
+            file = lastFile;
         }
-        if (id.empty() && c)
+        std::string id;
+        if (const auto c = snapshot(); c && !file.empty())
         {
-            const auto it = c->byFile.find(proc.surge->storage.lastLoadedPatch.u8string());
+            const auto it = c->byFile.find(file);
             if (it != c->byFile.end())
                 id = c->entries[it->second].id;
         }
         out.id = id;
-        announce(id);
+        // Events are posted from the message thread only, not from the thread that saves state.
+        if (auto *mm = juce::MessageManager::getInstanceWithoutCreating(); mm && mm->isThisTheMessageThread())
+            announce(id);
         return out;
     }
 
+    // True when no patch is queued or being applied, so lastFile and isDirty describe the patch that is in effect.
+    bool settled()
+    {
+        SurgeSynthesizer &s = *proc.surge;
+        if (s.rawLoadEnqueued.load() || s.has_patchid_file.load() || s.patchid_queue.load() >= 0)
+            return false;
+        std::unique_lock<std::mutex> g(s.rawLoadQueueMutex, std::try_to_lock);
+        return g.owns_lock();
+    }
+
+    void setLastFile(std::string f)
+    {
+        std::lock_guard<std::mutex> g(fileM);
+        lastFile = std::move(f);
+    }
+
+  public:
+    // The state marker (spec E.4) for the Audio Unit's saved state, "" for none. Any thread, no wait.
+    std::string stateMarker() { return life.isAlive() && catalog ? catalog->stateMarkerJson() : std::string(); }
+
+  private:
     void announce(const std::string &id)
     {
         {
@@ -617,12 +649,14 @@ class RelayState : public std::enable_shared_from_this<RelayState>
     SurgeSynthProcessor &proc;
     surgerelay::Liveness life;
     std::unique_ptr<presetrelay::Catalog> catalog;
-    std::mutex m; // guards cat, the scan times and the current-sound bookkeeping
+    std::mutex m; // guards cat, the scan times and reportedId
+    std::mutex fileM; // guards lastFile alone: the patch-load hook may run on the audio thread
+    std::string lastFile; // path of the patch Surge last loaded, as its patch-load hook reported it
     std::shared_ptr<const Catalogue> cat;
     std::atomic<bool> ready{false};
     bool everScanned{false};
     std::chrono::steady_clock::time_point lastScan{};
-    std::string loadedId, marker, reportedId;
+    std::string reportedId;
     surgerelay::Worker worker; // last member: destroyed (and joined) first
 };
 } // namespace
@@ -642,6 +676,19 @@ void SurgeSynthProcessor::detachPresetRelay()
 {
     if (auto s = std::static_pointer_cast<RelayState>(presetRelayState))
         s->retire();
+}
+
+std::string SurgeSynthProcessor::stateMarkerJson()
+{
+    try
+    {
+        auto s = std::static_pointer_cast<RelayState>(presetRelayState);
+        return s ? s->stateMarker() : std::string();
+    }
+    catch (...)
+    {
+        return std::string();
+    }
 }
 
 std::string SurgeSynthProcessor::handleRequest(const std::string &requestJson)

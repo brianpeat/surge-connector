@@ -1,8 +1,8 @@
 diff --git a/modules/juce_audio_plugin_client/juce_audio_plugin_client_AU_1.mm b/modules/juce_audio_plugin_client/juce_audio_plugin_client_AU_1.mm
-index 2e45c21..0aa3e72 100644
+index 2e45c21..8a950b1 100644
 --- a/modules/juce_audio_plugin_client/juce_audio_plugin_client_AU_1.mm
 +++ b/modules/juce_audio_plugin_client/juce_audio_plugin_client_AU_1.mm
-@@ -75,6 +75,89 @@
+@@ -75,6 +75,105 @@
  #include <juce_audio_basics/native/juce_AudioWorkgroup_mac.h>
  #include <juce_audio_processors_headless/format_types/juce_LegacyAudioParameter.h>
  #include <juce_audio_processors_headless/format_types/juce_AU_Shared.h>
@@ -37,6 +37,22 @@ index 2e45c21..0aa3e72 100644
 +        {
 +            return nullptr;
 +        }
++    }
++
++    // Adds the state marker (spec E.4) under the top-level key "PresetRelay" when the handler offers one and it converts. Never throws,
++    // never changes anything else in `dict`. Only SaveState calls it: RestoreState ignores the key (AUBase reads fixed keys and
++    // SaveState builds a new dictionary), so a restored marker is never handed back.
++    inline void addMarker (presetrelay::Handler& handler, CFMutableDictionaryRef dict)
++    {
++        try
++        {
++            if (auto* marker = presetrelay::markerToCF (handler.stateMarkerJson()))
++            {
++                CFDictionarySetValue (dict, CFSTR ("PresetRelay"), marker);
++                CFRelease (marker);
++            }
++        }
++        catch (...) {}
 +    }
 +
 +    // The last reply, kept for the host's next read of the property. Every access holds the mutex; requests run outside it.
@@ -92,7 +108,7 @@ index 2e45c21..0aa3e72 100644
  #include <juce_gui_basics/detail/juce_ComponentPeerHelpers.h>
  
  #if JucePlugin_Enable_ARA
-@@ -125,6 +208,9 @@
+@@ -125,6 +224,9 @@
  
      ScopedJuceInitialiser_GUI scopedInitialiser;
      std::unique_ptr<AudioProcessor> juceFilter { createPluginFilterOfType (AudioProcessor::wrapperType_AudioUnit) };
@@ -102,7 +118,7 @@ index 2e45c21..0aa3e72 100644
  };
  
  //==============================================================================
-@@ -497,6 +583,15 @@ ComponentResult GetPropertyInfo (AudioUnitPropertyID inID,
+@@ -497,6 +599,15 @@ ComponentResult GetPropertyInfo (AudioUnitPropertyID inID,
                      outWritable = true;
                      return noErr;
  
@@ -118,7 +134,7 @@ index 2e45c21..0aa3e72 100644
                  case kAudioUnitProperty_SupportsMPE:
                      outDataSize = sizeof (UInt32);
                      outWritable = false;
-@@ -529,6 +624,47 @@ ComponentResult GetProperty (AudioUnitPropertyID inID,
+@@ -529,6 +640,47 @@ ComponentResult GetProperty (AudioUnitPropertyID inID,
          {
              switch (inID)
              {
@@ -166,7 +182,7 @@ index 2e45c21..0aa3e72 100644
                  case kAudioUnitProperty_ParameterClumpName:
  
                      if (auto* clumpNameInfo = (AudioUnitParameterNameInfo*) outData)
-@@ -726,6 +862,19 @@ ComponentResult SetProperty (AudioUnitPropertyID inID,
+@@ -726,6 +878,19 @@ ComponentResult SetProperty (AudioUnitPropertyID inID,
          {
              switch (inID)
              {
@@ -186,3 +202,15 @@ index 2e45c21..0aa3e72 100644
                  case kAudioUnitProperty_MIDIOutputCallback:
                      if constexpr (pluginProducesMidiOutput)
                      {
+@@ -855,6 +1020,11 @@ ComponentResult SaveState (CFPropertyListRef* outData) override
+                 CFUniquePtr<CFStringRef> key (CFStringCreateWithCString (kCFAllocatorDefault, JUCE_STATE_DICTIONARY_KEY, kCFStringEncodingUTF8));
+                 CFDictionarySetValue (dict, key.get(), ourState.get());
+             }
++
++       #if JUCE_PRESET_BRIDGE
++        if (auto* handler = dynamic_cast<presetrelay::Handler*> (juceFilter.get()))
++            presetrelayhook::addMarker (*handler, dict);
++       #endif
+         }
+ 
+         return noErr;

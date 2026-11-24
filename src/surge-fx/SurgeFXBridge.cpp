@@ -119,7 +119,13 @@ class RelayState : public std::enable_shared_from_this<RelayState>
         c.runLoad = [](const std::function<LoadOutcome()> &job) {
             return surgerelay::onMainThread(job, kHopMs);
         };
-        baseline = parameterValues(); // the untouched instance: nothing to lose yet
+        // The preset name, effect type and parameter values at every preset load, save or state restore, kept here because the processor's
+        // own copies are not safe to read from another thread; `current` and the state marker read this copy.
+        notePreset(proc.getCurrentPresetName(), true); // the untouched instance: nothing to lose yet
+        proc.presetNameHook = [w](const std::string &name, bool fresh) {
+            if (auto s = w.lock())
+                s->notePreset(name, fresh);
+        };
     }
 
     void retire()
@@ -230,7 +236,7 @@ class RelayState : public std::enable_shared_from_this<RelayState>
         return out;
     }
 
-    // ---- modified: the parameters against what the last relay load (or a fresh instance) left -------------------------------------
+    // ---- modified: the parameters against what the last preset load, save (or a fresh instance) left ----------------------------
     std::vector<float> parameterValues()
     {
         std::vector<float> v;
@@ -239,15 +245,16 @@ class RelayState : public std::enable_shared_from_this<RelayState>
         return v;
     }
 
-    bool differsFromBaseline()
+    // Any thread: the processor calls it after every preset name change.
+    void notePreset(const std::string &name, bool fresh)
     {
-        const auto now = parameterValues();
-        if (now.size() != baseline.size())
-            return true;
-        for (std::size_t i = 0; i < now.size(); ++i)
-            if (std::fabs(now[i] - baseline[i]) > 1e-4f)
-                return true;
-        return false;
+        auto values = parameterValues();
+        const int type = proc.getEffectType();
+        std::lock_guard<std::mutex> g(snapM);
+        snapName = name;
+        snapType = type;
+        snapKnown = fresh; // restored settings may have been edited before they were saved: `modified` is then unknown
+        baseline = std::move(values);
     }
 
     juce::RangedAudioParameter *findTypeParameter()
@@ -304,7 +311,6 @@ class RelayState : public std::enable_shared_from_this<RelayState>
         proc.loadFxPreset(p);
         proc.setCurrentPresetName(p.name);
 
-        baseline = parameterValues();
         {
             std::lock_guard<std::mutex> g(m);
             loadedId = id;
@@ -314,39 +320,52 @@ class RelayState : public std::enable_shared_from_this<RelayState>
         return LoadOutcome::ok();
     }
 
-    // ---- current: runs on the message thread ----------------------------------------------------------------------------------------
+    // ---- current: the relay's own request runs on the message thread; the state marker calls it on the thread that saves state --------
+    // Never waits on a lock a load holds. The id is the one catalog preset with the remembered name and effect type, nothing else: a
+    // type changed by the host, a catalog not scanned yet or two presets with that name give no id.
     presetrelay::CurrentSound currentSound()
     {
         presetrelay::CurrentSound out;
-        auto use = life.use();
+        auto use = life.tryUse();
         if (!use)
             return out;
-        out.modified = differsFromBaseline();
-        const auto c = snapshot();
+        std::string name;
+        int type = 0;
+        {
+            std::lock_guard<std::mutex> g(snapM);
+            name = snapName;
+            type = snapType;
+            out.modifiedKnown = snapKnown;
+            out.modified = !snapKnown || differsFromBaseline();
+        }
         std::string id;
-        const std::string name = proc.getCurrentPresetName();
-        if (c && !name.empty())
+        const auto c = snapshot();
+        if (c && !name.empty() && name[0] != '\x01' && !proc.fxTypeChangedByHost.load())
         {
             std::string preferred;
             {
                 std::lock_guard<std::mutex> g(m);
                 preferred = loadedId;
             }
-            const int type = proc.getEffectType();
             const auto pit = c->byId.find(preferred);
             if (pit != c->byId.end() && c->entries[pit->second].preset.type == type &&
                 c->entries[pit->second].preset.name == name)
                 id = preferred;
             else
+            {
+                int matches = 0;
                 for (const auto &e : c->entries)
-                    if (e.preset.type == type && e.preset.name == name)
-                    {
+                    if (e.preset.type == type && e.preset.name == name && ++matches == 1)
                         id = e.id;
-                        break;
-                    }
+                if (matches != 1)
+                    id.clear();
+            }
         }
         out.id = id;
+        // Events are posted from the message thread only, not from the thread that saves state.
+        auto *mm = juce::MessageManager::getInstanceWithoutCreating();
         bool changed = false;
+        if (mm && mm->isThisTheMessageThread())
         {
             std::lock_guard<std::mutex> g(m);
             if (id != reportedId)
@@ -360,6 +379,23 @@ class RelayState : public std::enable_shared_from_this<RelayState>
         return out;
     }
 
+    // Caller holds snapM.
+    bool differsFromBaseline()
+    {
+        const auto now = parameterValues();
+        if (now.size() != baseline.size())
+            return true;
+        for (std::size_t i = 0; i < now.size(); ++i)
+            if (std::fabs(now[i] - baseline[i]) > 1e-4f)
+                return true;
+        return false;
+    }
+
+  public:
+    // The state marker (spec E.4) for the Audio Unit's saved state, "" for none. Any thread, no wait.
+    std::string stateMarker() { return life.isAlive() && catalog ? catalog->stateMarkerJson() : std::string(); }
+
+  private:
     SurgefxAudioProcessor &proc;
     surgerelay::Liveness life;
     std::unique_ptr<presetrelay::Catalog> catalog;
@@ -369,7 +405,11 @@ class RelayState : public std::enable_shared_from_this<RelayState>
     bool everScanned{false};
     std::chrono::steady_clock::time_point lastScan{};
     std::string loadedId, reportedId;
-    std::vector<float> baseline; // message thread only
+    std::mutex snapM; // guards the four members below: the preset hook may run on any thread
+    std::string snapName;
+    int snapType{0};
+    bool snapKnown{true};
+    std::vector<float> baseline;
     surgerelay::Worker worker;   // last member: destroyed (and joined) first
 };
 } // namespace
@@ -387,6 +427,19 @@ void SurgefxAudioProcessor::detachPresetRelay()
 {
     if (auto s = std::static_pointer_cast<RelayState>(presetRelayState))
         s->retire();
+}
+
+std::string SurgefxAudioProcessor::stateMarkerJson()
+{
+    try
+    {
+        auto s = std::static_pointer_cast<RelayState>(presetRelayState);
+        return s ? s->stateMarker() : std::string();
+    }
+    catch (...)
+    {
+        return std::string();
+    }
 }
 
 std::string SurgefxAudioProcessor::handleRequest(const std::string &requestJson)

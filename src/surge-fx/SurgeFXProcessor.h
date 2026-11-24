@@ -32,6 +32,7 @@
 #include "FxPresetAndClipboardManager.h"
 #include <PresetRelay.h>
 #include <memory>
+#include <functional>
 #include <atomic>
 #include "sst/filters/HalfRateFilter.h"
 
@@ -65,6 +66,8 @@ class SurgefxAudioProcessor : public juce::AudioProcessor,
   public:
     // PresetRelay (SurgeFXBridge.cpp, SurgeFXBridgeVST3.cpp): Surge XT Effects lists its .srgfx effect presets and loads one by id, switching effect type if needed.
     std::string handleRequest(const std::string &requestJson) override;
+    // The Audio Unit state marker (PresetRelay spec E.4): called from the host's state-save path, so it never blocks or throws.
+    std::string stateMarkerJson() override;
     int32_t queryIEditController(const Steinberg::TUID iid, void **obj) override;
     void initPresetRelay();   // builds the handler (and the VST3 slot) at the end of the constructor
     void detachPresetRelay(); // first thing in the destructor
@@ -162,7 +165,14 @@ class SurgefxAudioProcessor : public juce::AudioProcessor,
     {
         currentPresetName = name;
         fxTypeChangedByHost = false;
+        if (presetNameHook)
+            presetNameHook(name, true);
     }
+
+    // Optional (PresetRelay): told after the name is set, with the effect settings of that moment. `fresh` is true when the settings were
+    // just loaded from, or saved as, that preset and false when they come from restored state and may have been edited before it was
+    // saved. Lets a reader on another thread keep its own copy; set once before any use, keep it short and non-blocking.
+    std::function<void(const std::string &name, bool fresh)> presetNameHook;
 
     // Once the host has changed the effect type, the settings no longer come from that preset
     std::string getCurrentPresetName() const

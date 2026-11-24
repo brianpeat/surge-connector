@@ -87,6 +87,16 @@ class Liveness
             return Use();
         return Use(std::move(l));
     }
+    // Like use(), but never waits: for a caller on a thread that must not block (the one that saves state).
+    Use tryUse()
+    {
+        std::unique_lock<std::timed_mutex> l(m, std::defer_lock);
+        if (!alive.load() || !l.try_lock())
+            return Use();
+        if (!alive.load())
+            return Use();
+        return Use(std::move(l));
+    }
     bool isAlive() const { return alive.load(); }
     void retire()
     {

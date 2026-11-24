@@ -583,6 +583,8 @@ struct CurrentSound {
     std::string id;
     bool modified = false;
     std::string rightsJson;
+    // false = no edit tracking: the state marker omits `modified` (the `current` reply always has it).
+    bool modifiedKnown = true;
 };
 
 // Runs `job` on the thread that `post` schedules work on (JUCE: [](std::function<void()> f) { juce::MessageManager::callAsync(std::move(f)); }),
@@ -619,6 +621,7 @@ struct CatalogConfig {
     int timeoutMs = 10000;                            // what you promise to answer within, at most 60000
     int pageMax = 500;                                // most records in a list/collections/collection page; a larger `limit` is clamped
     bool supportsAsyncLoad = false;                   // honour "async":true on load
+    bool stateMarker = true;                          // stateMarkerJson() builds the AU state marker (E.4); false = never
 
     std::function<std::vector<std::string>()> records;      // each a JSON object string with "id" and "name"
     std::function<std::string()> revision;                  // default: hash of the content of every record, collection and the packs
@@ -682,6 +685,44 @@ public:
         lk.unlock();
         if (exited) worker.join();
         else worker.detach();
+    }
+
+    // The AU state marker (spec E.4) from `current`, or "" for none: none when the marker is off, the catalog is off,
+    // stopped or not ready, `current` is not offered (access below audition, no callback) or reports no usable id,
+    // idStability is `session`, the id is not in the catalog (checked only against the records already cached), a load
+    // is running, or the object would reach 1 KiB. `current`, `isReady` and `revision` run on the calling thread, never through runLoad (keep them cheap), and a
+    // load running at that moment gives no marker (try_lock, no waiting): so `current` must be safe to call from any
+    // thread, and the caller must not already be inside a load, current or referenceState callback. `modified` is
+    // written only when `modifiedKnown`. `revision` is written only when it is 1 to 256 bytes of UTF-8: from the
+    // `revision` callback, else from the cached records, else omitted. Never throws.
+    std::string stateMarkerJson() override {
+        try {
+            if (!enabled_ || stopped_ || access_.load() < Access::audition) return {};
+            const CatalogConfig cfg = configCopy();
+            if (!cfg.stateMarker || !cfg.current || cfg.idStability == "session") return {};
+            if (cfg.isReady && !cfg.isReady()) return {};
+            CurrentSound c;
+            {
+                std::unique_lock<std::timed_mutex> lock(shared_->loadMutex, std::defer_lock);
+                if (!lock.try_lock()) return {};
+                c = cfg.current();
+            }
+            if (!goodId(c.id) || !validUtf8(c.id)) return {};
+            std::string rev;
+            {
+                std::lock_guard<std::mutex> g(cacheMutex_);
+                if (cache_ && !cache_->index.count(c.id)) return {};
+                if (cache_) rev = cache_->revision;
+            }
+            if (cfg.revision) rev = normalizedRevision(cfg.revision());
+            std::string out = "{\"relay\":1,\"id\":\"" + jsonEscape(c.id) + "\"";
+            if (c.modifiedKnown) out += std::string(",\"modified\":") + (c.modified ? "true" : "false");
+            if (!rev.empty() && rev.size() <= 256 && validUtf8(rev)) out += ",\"revision\":\"" + jsonEscape(rev) + "\"";
+            out += "}";
+            return out.size() < 1024 ? out : std::string();
+        } catch (...) {
+            return {};
+        }
     }
 
     std::string handleRequest(const std::string& req) override {

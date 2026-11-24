@@ -1,5 +1,24 @@
 > **Experimental fork.** This branch adds an optional PresetRelay connector (a way for the plugin to share its sound catalog with host apps). It is work in progress; the spec link is coming. Not an official release.
 
+## PresetRelay connector in this fork
+This fork adds an optional handler for [PresetRelay](https://github.com/brianpeat/PresetRelay), so a host app can list Surge's patches (XT) and
+effect presets (XT Effects), load one by id, and read which one is loaded. It runs on the host's request threads, off the audio path except one short, non-blocking hook when a patch finishes loading, and without a
+PresetRelay host the plugin behaves as before. Details, build steps and the Audio Unit state marker: [BUILDING-PRESETRELAY.md](BUILDING-PRESETRELAY.md).
+
+Added:
+- `presetrelay/`: the PresetRelay reference headers (copied unchanged), `SurgeRelayShared.h` (fork helpers: main-thread hop, liveness, worker) and the two discovery files.
+- `src/surge-xt/SurgeBridge.cpp`, `SurgeBridgeVST3.cpp`, `SurgeBridgeCLAP.cpp`: the Surge XT handler and its VST3 and CLAP doorways.
+- `src/surge-fx/SurgeFXBridge.cpp`, `SurgeFXBridgeVST3.cpp`: the same for Surge XT Effects.
+- `patches/juce-au-presetrelay-hook.patch` (Audio Unit property and state marker, applied to `libs/JUCE`) and `patches/clap-juce-extensions-extension-hook.patch`.
+
+Surge's own files touched, each by a small hook:
+- `src/surge-xt/SurgeSynthProcessor.h/.cpp`, `src/surge-fx/SurgeFXProcessor.h/.cpp`: implement the handler, build it at the end of the constructor, retire it first in the destructor.
+- `src/common/SurgeSynthesizer.h/.cpp`: `lastLoadedPatchHook`, called wherever the loaded-patch path changes.
+- `src/surge-xt/CMakeLists.txt`, `src/surge-fx/CMakeLists.txt`: sources, include path and the discovery file in the Audio Unit bundle.
+- `src/surge-fx/SurgeFXProcessor.h/.cpp` also carry `presetNameHook`, called when the effect preset name changes.
+
+To remove it: revert those hooks, delete the files above and the `presetrelay/` and `patches/` entries, and drop the CMake lines.
+
 # Surge XT
 
 **If you are a musician looking to use Surge XT, please download the appropriate binary

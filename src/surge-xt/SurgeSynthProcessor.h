@@ -471,6 +471,8 @@ class SurgeSynthProcessor : public juce::AudioProcessor,
 
     // PresetRelay (SurgeBridge.cpp)
     std::string handleRequest(const std::string &requestJson) override;
+    // The Audio Unit state marker (PresetRelay spec E.4): called from the host's state-save path, so it never blocks or throws.
+    std::string stateMarkerJson() override;
     std::shared_ptr<void> presetRelayState;
 
     std::unique_ptr<SurgeSynthesizer> surge;

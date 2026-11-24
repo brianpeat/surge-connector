@@ -31,4 +31,12 @@ inline CFPropertyListRef jsonToCF(const std::string& json) {
     }
 }
 
+// The value for the top-level state key "PresetRelay" (spec E.4): a +1 retained dictionary built from
+// Handler::stateMarkerJson(), or nullptr when the text is empty or not a JSON object. A wrapper adds the key only when
+// this is not nullptr, and releases the result.
+inline CFPropertyListRef markerToCF(const std::string& json) {
+    if (json.empty()) return nullptr;
+    return jsonToCF(json);
+}
+
 }  // namespace presetrelay

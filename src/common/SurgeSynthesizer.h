@@ -534,6 +534,15 @@ class alignas(16) SurgeSynthesizer
     }
     void deletePatchLoadedListener(std::string key) { patchLoadedListeners.erase(key); }
 
+    // Optional (PresetRelay): told after every change of storage.lastLoadedPatch, on the thread that made it, so a reader on another
+    // thread can keep its own copy instead of reading the path. Set once before any patch load; keep it short and non-blocking.
+    std::function<void(const fs::path &)> lastLoadedPatchHook;
+    void noteLastLoadedPatch()
+    {
+        if (lastLoadedPatchHook)
+            lastLoadedPatchHook(storage.lastLoadedPatch);
+    }
+
     //==============================================================================
     // Parameter changes coming from within the synth (e.g. from MIDI-learned input)
     // are communicated to listeners here

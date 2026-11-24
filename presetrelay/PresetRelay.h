@@ -29,6 +29,10 @@ struct Handler {
     // Called on a non-audio thread, possibly from several threads at once. Must not throw: catch everything and answer `failed`.
     // Keep it quick; `load` should hop to the plugin's UI/message thread.
     virtual std::string handleRequest(const std::string& requestJson) = 0;
+    // Optional, Audio Unit only (spec Appendix E.4): the state marker as a JSON object text, {"relay":1,"id":...}, or
+    // an empty string for "no marker". The AU glue calls it from the host's state-save path, so it must never throw,
+    // never block and be safe on any thread. The default writes no marker.
+    virtual std::string stateMarkerJson() { return std::string(); }
 };
 
 enum class Access { catalog = 1, audition = 2, insight = 3, open = 4 };
