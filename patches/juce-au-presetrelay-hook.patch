@@ -1,5 +1,5 @@
 diff --git a/modules/juce_audio_plugin_client/juce_audio_plugin_client_AU_1.mm b/modules/juce_audio_plugin_client/juce_audio_plugin_client_AU_1.mm
-index 2e45c21..8a950b1 100644
+index 2e45c21..d69581e 100644
 --- a/modules/juce_audio_plugin_client/juce_audio_plugin_client_AU_1.mm
 +++ b/modules/juce_audio_plugin_client/juce_audio_plugin_client_AU_1.mm
 @@ -75,6 +75,105 @@
@@ -134,11 +134,15 @@ index 2e45c21..8a950b1 100644
                  case kAudioUnitProperty_SupportsMPE:
                      outDataSize = sizeof (UInt32);
                      outWritable = false;
-@@ -529,6 +640,47 @@ ComponentResult GetProperty (AudioUnitPropertyID inID,
+@@ -529,6 +640,51 @@ ComponentResult GetProperty (AudioUnitPropertyID inID,
          {
              switch (inID)
              {
 +               #if JUCE_PRESET_BRIDGE
++                case kAudioUnitProperty_PresentPreset:
++                    refreshPresetRelayName();   // then the base class answers with its current preset
++                    break;
++
 +                case presetrelay::kAUPropertyID:
 +                {
 +                    auto* handler = dynamic_cast<presetrelay::Handler*> (juceFilter.get());
@@ -182,7 +186,7 @@ index 2e45c21..8a950b1 100644
                  case kAudioUnitProperty_ParameterClumpName:
  
                      if (auto* clumpNameInfo = (AudioUnitParameterNameInfo*) outData)
-@@ -726,6 +878,19 @@ ComponentResult SetProperty (AudioUnitPropertyID inID,
+@@ -726,6 +882,19 @@ ComponentResult SetProperty (AudioUnitPropertyID inID,
          {
              switch (inID)
              {
@@ -202,7 +206,65 @@ index 2e45c21..8a950b1 100644
                  case kAudioUnitProperty_MIDIOutputCallback:
                      if constexpr (pluginProducesMidiOutput)
                      {
-@@ -855,6 +1020,11 @@ ComponentResult SaveState (CFPropertyListRef* outData) override
+@@ -827,9 +996,57 @@ ComponentResult SetProperty (AudioUnitPropertyID inID,
+         return MusicDeviceBase::SetProperty (inID, inScope, inElement, inData, inDataSize);
+     }
+ 
++   #if JUCE_PRESET_BRIDGE
++    // Shows the loaded catalog sound's name through the ordinary current preset (spec E.5): AUBase answers
++    // kAudioUnitProperty_PresentPreset and writes the ClassInfo "name" from its own current preset. Does nothing when the
++    // plugin reports no name or the base class already holds it; the factory preset list and restore are untouched.
++    // NewCustomPresetSet takes its own reference to the name and releases the old one. Never throws.
++    void refreshPresetRelayName()
++    {
++        try
++        {
++            auto* handler = dynamic_cast<presetrelay::Handler*> (juceFilter.get());
++            if (handler == nullptr)
++                return;
++
++            const auto name = handler->currentSoundName();
++            if (name.empty())
++                return;
++
++            CFUniquePtr<CFStringRef> wanted (CFStringCreateWithBytes (kCFAllocatorDefault, (const UInt8*) name.data(),
++                                                                     (CFIndex) name.size(), kCFStringEncodingUTF8, false));
++            if (wanted == nullptr)
++                return;
++
++            static std::mutex presetNameLock;   // keeps two refreshes from swapping the name at once
++            std::lock_guard<std::mutex> guard (presetNameLock);
++
++            AUPreset held { -1, nullptr };
++
++            if (MusicDeviceBase::GetProperty (kAudioUnitProperty_PresentPreset, kAudioUnitScope_Global, 0, &held) == noErr
++                && held.presetName != nullptr)
++            {
++                const bool same = CFStringCompare (held.presetName, wanted.get(), 0) == kCFCompareEqualTo;
++                CFRelease (held.presetName);   // GetProperty handed us a reference
++
++                if (same)
++                    return;
++            }
++
++            AUPreset fresh { -1, wanted.get() };
++            NewCustomPresetSet (fresh);
++        }
++        catch (...) {}
++    }
++   #endif
++
+     //==============================================================================
+     ComponentResult SaveState (CFPropertyListRef* outData) override
+     {
++       #if JUCE_PRESET_BRIDGE
++        refreshPresetRelayName();   // before the base class writes the ClassInfo name
++       #endif
++
+         ComponentResult err = MusicDeviceBase::SaveState (outData);
+ 
+         if (err != noErr)
+@@ -855,6 +1072,11 @@ ComponentResult SaveState (CFPropertyListRef* outData) override
                  CFUniquePtr<CFStringRef> key (CFStringCreateWithCString (kCFAllocatorDefault, JUCE_STATE_DICTIONARY_KEY, kCFStringEncodingUTF8));
                  CFDictionarySetValue (dict, key.get(), ourState.get());
              }

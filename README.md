@@ -9,7 +9,7 @@ Added:
 - `presetrelay/`: the PresetRelay reference headers (copied unchanged), `SurgeRelayShared.h` (fork helpers: main-thread hop, liveness, worker) and the two discovery files.
 - `src/surge-xt/SurgeBridge.cpp`, `SurgeBridgeVST3.cpp`, `SurgeBridgeCLAP.cpp`: the Surge XT handler and its VST3 and CLAP doorways.
 - `src/surge-fx/SurgeFXBridge.cpp`, `SurgeFXBridgeVST3.cpp`: the same for Surge XT Effects.
-- `patches/juce-au-presetrelay-hook.patch` (Audio Unit property and state marker, applied to `libs/JUCE`) and `patches/clap-juce-extensions-extension-hook.patch`.
+- `patches/juce-au-presetrelay-hook.patch` (Audio Unit property, state marker and current sound name, applied to `libs/JUCE`) and `patches/clap-juce-extensions-extension-hook.patch`.
 
 Surge's own files touched, each by a small hook:
 - `src/surge-xt/SurgeSynthProcessor.h/.cpp`, `src/surge-fx/SurgeFXProcessor.h/.cpp`: implement the handler, build it at the end of the constructor, retire it first in the destructor.

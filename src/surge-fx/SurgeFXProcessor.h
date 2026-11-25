@@ -68,6 +68,8 @@ class SurgefxAudioProcessor : public juce::AudioProcessor,
     std::string handleRequest(const std::string &requestJson) override;
     // The Audio Unit state marker (PresetRelay spec E.4): called from the host's state-save path, so it never blocks or throws.
     std::string stateMarkerJson() override;
+    // The loaded catalog sound's name for the Audio Unit's current preset (spec E.5); the program list is untouched.
+    std::string currentSoundName() override;
     int32_t queryIEditController(const Steinberg::TUID iid, void **obj) override;
     void initPresetRelay();   // builds the handler (and the VST3 slot) at the end of the constructor
     void detachPresetRelay(); // first thing in the destructor

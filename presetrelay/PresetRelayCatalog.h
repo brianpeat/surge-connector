@@ -725,6 +725,42 @@ public:
         }
     }
 
+    // The name of the catalog sound `current` reports, for the ordinary current-preset name (spec E.5), or "" for none.
+    // Same locking rules as stateMarkerJson: `current` and `isReady` run on the calling thread, never through
+    // runLoad, a running load gives "" at once (try_lock), and it never throws. Empty too when the catalog is off,
+    // stopped or not ready, `current` is not offered, it reports no id, or the id is not in the cached catalog (the
+    // name comes from the cached record only; this never builds the catalog). A name is not an id, so idStability
+    // does not matter. The text is valid UTF-8 (bad bytes become U+FFFD), control characters become spaces, ends are
+    // trimmed, and it is cut to 128 bytes on a code point boundary.
+    std::string currentSoundName() override {
+        try {
+            if (!enabled_ || stopped_) return {};
+            const CatalogConfig cfg = configCopy();
+            if (!cfg.current) return {};
+            if (cfg.isReady && !cfg.isReady()) return {};
+            CurrentSound c;
+            {
+                std::unique_lock<std::timed_mutex> lock(shared_->loadMutex, std::defer_lock);
+                if (!lock.try_lock()) return {};
+                c = cfg.current();
+            }
+            if (!goodId(c.id) || !validUtf8(c.id)) return {};
+            std::string record;
+            {
+                std::lock_guard<std::mutex> g(cacheMutex_);
+                if (!cache_) return {};
+                const auto it = cache_->index.find(c.id);
+                if (it == cache_->index.end()) return {};
+                record = cache_->items[it->second].second;
+            }
+            std::string name;
+            if (mini::readText(record, "name", name) != mini::Presence::ok) return {};
+            return displayName(name);
+        } catch (...) {
+            return {};
+        }
+    }
+
     std::string handleRequest(const std::string& req) override {
         try {
             std::string out = dispatch(req);
@@ -857,6 +893,36 @@ private:
         std::lock_guard<std::mutex> g(cacheMutex_);
         cache_ = snap;
         return snap;
+    }
+
+    // Display text for a current-preset name: well-formed UTF-8, no control characters, trimmed, at most 128 bytes.
+    static std::string displayName(const std::string& in) {
+        constexpr std::size_t kMaxNameBytes = 128;
+        std::string out;
+        for (std::size_t i = 0; i < in.size();) {
+            const std::size_t n = utf8SequenceLength(in, i);
+            if (n == 0) { out += "\xEF\xBF\xBD"; ++i; continue; }
+            const unsigned char ch = static_cast<unsigned char>(in[i]);
+            if (n == 1 && (ch < 0x20 || ch == 0x7F)) out += ' ';
+            else out.append(in, i, n);
+            i += n;
+        }
+        const auto b = out.find_first_not_of(' ');
+        if (b == std::string::npos) return {};
+        out = out.substr(b, out.find_last_not_of(' ') - b + 1);
+        if (out.size() > kMaxNameBytes) {
+            std::size_t cut = 0;
+            for (std::size_t i = 0; i < out.size();) {
+                const std::size_t n = utf8SequenceLength(out, i);
+                if (i + n > kMaxNameBytes) break;
+                i += n;
+                cut = i;
+            }
+            out.resize(cut);
+            const auto e = out.find_last_not_of(' ');
+            out = e == std::string::npos ? std::string() : out.substr(0, e + 1);
+        }
+        return out;
     }
 
     // "building" is what hello reports while the catalog is not ready, so a final revision never equals it.

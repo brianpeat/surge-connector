@@ -33,6 +33,10 @@ struct Handler {
     // an empty string for "no marker". The AU glue calls it from the host's state-save path, so it must never throw,
     // never block and be safe on any thread. The default writes no marker.
     virtual std::string stateMarkerJson() { return std::string(); }
+    // Optional (spec Appendix E.5): the display name of the catalog sound that is loaded, or an empty string when the
+    // plugin cannot tell. Display text only, valid UTF-8, at most 128 bytes. The AU glue reads it from the host's
+    // current-preset and state-save paths, so it must never throw, never block and be safe on any thread.
+    virtual std::string currentSoundName() { return std::string(); }
 };
 
 enum class Access { catalog = 1, audition = 2, insight = 3, open = 4 };

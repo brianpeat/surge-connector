@@ -621,6 +621,8 @@ class RelayState : public std::enable_shared_from_this<RelayState>
   public:
     // The state marker (spec E.4) for the Audio Unit's saved state, "" for none. Any thread, no wait.
     std::string stateMarker() { return life.isAlive() && catalog ? catalog->stateMarkerJson() : std::string(); }
+    // The loaded sound's name (spec E.5) from the same snapshot as the marker, "" for none. Any thread, no wait.
+    std::string soundName() { return life.isAlive() && catalog ? catalog->currentSoundName() : std::string(); }
 
   private:
     void announce(const std::string &id)
@@ -684,6 +686,19 @@ std::string SurgeSynthProcessor::stateMarkerJson()
     {
         auto s = std::static_pointer_cast<RelayState>(presetRelayState);
         return s ? s->stateMarker() : std::string();
+    }
+    catch (...)
+    {
+        return std::string();
+    }
+}
+
+std::string SurgeSynthProcessor::currentSoundName()
+{
+    try
+    {
+        auto s = std::static_pointer_cast<RelayState>(presetRelayState);
+        return s ? s->soundName() : std::string();
     }
     catch (...)
     {

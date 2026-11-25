@@ -27,6 +27,19 @@ cmake --build build --target surge-xt_AU
 ## Formats
 Audio Unit (property, needs the JUCE patch), VST3 (`SurgeBridgeVST3.cpp`, no JUCE patch) and CLAP (`SurgeBridgeCLAP.cpp`, needs the small clap-juce-extensions hook above, which is generic: a processor can return its own plugin extension). Surge XT Effects has AU and VST3 (`src/surge-fx/SurgeFXBridge*.cpp`), `kind: effect`. Check any build with `build/relaycheck` from the PresetRelay repo.
 
+## Sound name
+Both Audio Units also report the loaded catalog sound's name through the ordinary current preset (PresetRelay spec, Appendix E.5), so a host
+that cannot ask `current` still sees it. The JUCE patch sets the wrapper's current preset (number -1, the name) from `Handler::currentSoundName()`
+on a state save and on a read of `kAudioUnitProperty_PresentPreset`; the name is also the `name` key of the saved state dictionary.
+
+- **Source:** `Catalog::currentSoundName()`, from the same snapshot as the state marker (`stateMarkerJson`): the catalog name of the loaded
+  sound, display text only, at most 128 bytes of UTF-8. No new tracking, no change to Surge's GUI.
+- **Empty:** under the same conditions as the marker (not a catalog sound, catalog not built, a load queued or running, ambiguous effect
+  preset, access level or `c.current` unset). The wrapper then keeps JUCE's own value (`Untitled`). The name stays after an edit; the marker's `modified` says so.
+- **Unchanged:** `getNumPrograms`, `getCurrentProgram`, `getProgramName`, the factory preset list and restore. No program list is added.
+- **Limits:** as for the marker, Surge does not update its loaded-patch path on "Save Patch As", so the name can stay the earlier patch's
+  until another is loaded. VST3 and CLAP report nothing. Not tested live.
+
 ## State marker
 Surge XT and Surge XT Effects (Audio Unit only) record which catalog sound is loaded in the state a host saves, so a host can label an
 instance, a sound in a saved project or the sound behind a saved channel strip without loading the plugin (PresetRelay spec, Appendix E.4).
